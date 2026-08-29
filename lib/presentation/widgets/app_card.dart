@@ -38,14 +38,35 @@ class AppCard extends StatelessWidget {
     Widget content = Padding(padding: padding, child: child);
 
     if (accent != null) {
-      content = Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      // The accent bar is drawn as a Positioned overlay, NOT as a stretched
+      // Row child.
+      //
+      // `Row(crossAxisAlignment: stretch)` makes RenderFlex pass
+      // `BoxConstraints.tightFor(height: constraints.maxHeight)` to its
+      // children. List items are laid out with maxHeight: infinity, so that's
+      // an infinite tight height — a layout exception, and in a release build
+      // a failed render paints nothing at all. Every card with an accent (i.e.
+      // every topic row on Home, in a subject, and in the calendar) silently
+      // disappeared; cards without one still rendered, which is why subjects
+      // stayed visible.
+      //
+      // In a Stack the non-positioned child establishes the height, and the
+      // bar then stretches to it via top/bottom — no unbounded constraint.
+      content = Stack(
         children: [
-          Container(
-            width: 3,
-            color: muted ? accent!.withValues(alpha: 0.4) : accent,
+          Padding(
+            padding: const EdgeInsets.only(left: 3),
+            child: content,
           ),
-          Expanded(child: content),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 3,
+            child: ColoredBox(
+              color: muted ? accent!.withValues(alpha: 0.4) : accent!,
+            ),
+          ),
         ],
       );
     }

@@ -253,9 +253,32 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   final r = await BackupService.instance.flush();
                   if (mounted) setState(() => _busy = false);
                   await _refreshStatus();
-                  _toast(r.ok
-                      ? 'Backed up ${r.topics} topics to ${r.location?.label}'
-                      : 'Backup failed: ${r.error}');
+                  if (!mounted) return;
+                  if (r.ok) {
+                    _toast('Backed up ${r.topics} topics '
+                        'to ${r.location?.label}');
+                  } else {
+                    // A snackbar truncates the diagnostic, which is the only
+                    // thing that makes a failure actionable.
+                    await showDialog<void>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Backup failed'),
+                        content: SingleChildScrollView(
+                          child: SelectableText(
+                            r.error ?? 'Unknown error',
+                            style: Theme.of(ctx).textTheme.bodySmall,
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Close'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
                 },
         ),
         ListTile(

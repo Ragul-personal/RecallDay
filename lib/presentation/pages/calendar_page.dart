@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../../core/constants/subject_palette.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
 import '../../core/utils/date_utils.dart';
 import '../../domain/entities/topic.dart';
@@ -11,15 +11,28 @@ import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/motion.dart';
 import '../widgets/tab_app_bar.dart';
+import '../widgets/topic_sheet.dart';
 
-/// Calendar entry — one per (topic, projected due date). [isFirm] is true
-/// only for the topic's currently scheduled `nextDueAt`; later entries on
-/// the SR ladder are projections that will be recomputed after each review.
+/// What a calendar row represents.
+enum _Kind {
+  /// The topic's real `nextDueAt` — a commitment.
+  scheduled,
+
+  /// A later rung on the SR ladder. Recomputed after every review, so it's
+  /// shown as a forecast rather than a promise.
+  projected,
+
+  /// A review that actually happened. This is what fills in the past — the
+  /// calendar used to project forwards only, so every past date read
+  /// "Nothing planned this day" even on days you'd studied.
+  reviewed,
+}
+
 class _CalEntry {
   final Topic topic;
-  final DateTime due;
-  final bool isFirm;
-  const _CalEntry(this.topic, this.due, this.isFirm);
+  final DateTime when;
+  final _Kind kind;
+  const _CalEntry(this.topic, this.when, this.kind);
 }
 
 class CalendarPage extends ConsumerStatefulWidget {
@@ -31,38 +44,55 @@ class CalendarPage extends ConsumerStatefulWidget {
 class _CalendarPageState extends ConsumerState<CalendarPage> {
   DateTime _focused = DateTime.now();
   DateTime _selected = DateTime.now();
-  CalendarFormat _format = CalendarFormat.month;
 
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
+
+  static DateTime _key(DateTime d) => DateTime(d.year, d.month, d.day);
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
+    final light = theme.brightness == Brightness.light;
+    final success = light ? StatusColors.successLight : StatusColors.successDark;
 
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
     final engine = ref.watch(engineProvider);
+    final reviews = ref.watch(topicRepositoryProvider).allReviews();
 
-    final entriesByDay = <DateTime, List<_CalEntry>>{};
+    final byDay = <DateTime, List<_CalEntry>>{};
+    void add(_CalEntry e) =>
+        byDay.putIfAbsent(_key(e.when), () => <_CalEntry>[]).add(e);
+
+    // Forward: what's coming.
     for (final t in topics) {
       if (t.status != TopicStatus.active) continue;
       final projected = engine.projectFutureDueDates(t);
       for (var i = 0; i < projected.length; i++) {
-        final d = projected[i];
-        final key = DateTime(d.year, d.month, d.day);
-        entriesByDay
-            .putIfAbsent(key, () => <_CalEntry>[])
-            .add(_CalEntry(t, d, i == 0));
+        add(_CalEntry(
+          t,
+          projected[i],
+          i == 0 ? _Kind.scheduled : _Kind.projected,
+        ));
       }
     }
 
-    final selectedKey =
-        DateTime(_selected.year, _selected.month, _selected.day);
-    final entries = (entriesByDay[selectedKey] ?? const <_CalEntry>[]).toList()
-      ..sort((a, b) => a.due.compareTo(b.due));
+    // Backward: what actually happened. Reviews of deleted topics are skipped.
+    final byId = {for (final t in topics) t.id: t};
+    for (final r in reviews) {
+      final t = byId[r.topicId];
+      if (t == null) continue;
+      add(_CalEntry(t, r.reviewedAt, _Kind.reviewed));
+    }
+
+    final entries = (byDay[_key(_selected)] ?? const <_CalEntry>[]).toList()
+      ..sort((a, b) => a.when.compareTo(b.when));
+
+    final doneCount = entries.where((e) => e.kind == _Kind.reviewed).length;
+    final planCount = entries.length - doneCount;
 
     return CustomScrollView(
       slivers: [
@@ -83,10 +113,9 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                 AppSpacing.sm,
               ),
               child: TableCalendar<_CalEntry>(
-                firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                firstDay: DateTime.now().subtract(const Duration(days: 365 * 3)),
                 lastDay: DateTime.now().add(const Duration(days: 365 * 2)),
                 focusedDay: _focused,
-                calendarFormat: _format,
                 startingDayOfWeek: StartingDayOfWeek.monday,
                 availableGestures: AvailableGestures.horizontalSwipe,
                 selectedDayPredicate: (d) => _sameDay(d, _selected),
@@ -94,11 +123,8 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                   _selected = sel;
                   _focused = foc;
                 }),
-                onFormatChanged: (f) => setState(() => _format = f),
                 onPageChanged: (f) => _focused = f,
-                eventLoader: (day) =>
-                    entriesByDay[DateTime(day.year, day.month, day.day)] ??
-                    const [],
+                eventLoader: (day) => byDay[_key(day)] ?? const [],
                 daysOfWeekStyle: DaysOfWeekStyle(
                   weekdayStyle: tt.labelSmall!,
                   weekendStyle: tt.labelSmall!,
@@ -106,16 +132,23 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                 calendarBuilders: CalendarBuilders<_CalEntry>(
                   markerBuilder: (context, day, events) {
                     if (events.isEmpty) return null;
-                    final firm = events.any((e) => e.isFirm);
+                    // Green = you studied. Solid violet = firm commitment.
+                    // Faded violet = forecast only.
+                    final done = events.any((e) => e.kind == _Kind.reviewed);
+                    final firm =
+                        events.any((e) => e.kind == _Kind.scheduled);
+                    final color = done
+                        ? success
+                        : firm
+                            ? cs.primary
+                            : cs.primary.withValues(alpha: 0.35);
                     return Positioned(
                       bottom: 5,
                       child: Container(
-                        width: firm ? 5 : 4,
-                        height: firm ? 5 : 4,
+                        width: done || firm ? 5 : 4,
+                        height: done || firm ? 5 : 4,
                         decoration: BoxDecoration(
-                          color: firm
-                              ? cs.primary
-                              : cs.primary.withValues(alpha: 0.35),
+                          color: color,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -161,13 +194,24 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
             ),
           ),
         ),
+
         SliverToBoxAdapter(
           child: SectionHeader(
             title: DateLabels.relative(_selected),
             count: entries.isEmpty ? null : entries.length,
             accent: cs.primary,
+            trailing: entries.isEmpty
+                ? null
+                : Text(
+                    [
+                      if (doneCount > 0) '$doneCount done',
+                      if (planCount > 0) '$planCount planned',
+                    ].join(' · '),
+                    style: tt.labelSmall,
+                  ),
           ),
         ),
+
         if (entries.isEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -177,28 +221,34 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                 AppSpacing.gutter,
                 AppSpacing.xl,
               ),
-              child: Text('Nothing planned this day.', style: tt.bodySmall),
+              child: Text(
+                _key(_selected).isBefore(_key(DateTime.now()))
+                    ? 'No reviews on this day.'
+                    : 'Nothing planned this day.',
+                style: tt.bodySmall,
+              ),
             ),
           )
         else
           SliverPadding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.gutter,
-            ),
+            padding:
+                const EdgeInsets.symmetric(horizontal: AppSpacing.gutter),
             sliver: SliverList.separated(
               itemCount: entries.length,
-              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+              separatorBuilder: (_, __) =>
+                  const SizedBox(height: AppSpacing.sm),
               itemBuilder: (_, i) {
                 final e = entries[i];
-                final s =
-                    subjects.where((s) => s.id == e.topic.subjectId).firstOrNull;
+                final s = subjects
+                    .where((s) => s.id == e.topic.subjectId)
+                    .firstOrNull;
                 return FadeSlideIn(
                   index: i,
-                  child: _PlannedRow(
+                  child: _EntryRow(
                     entry: e,
                     subjectName: s?.name ?? 'No subject',
                     accent: s?.color ?? cs.primary,
-                    onTap: () => context.push('/topic/${e.topic.id}'),
+                    onTap: () => showTopicSheet(context, ref, e.topic.id),
                   ),
                 );
               },
@@ -212,13 +262,13 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   }
 }
 
-class _PlannedRow extends StatelessWidget {
+class _EntryRow extends StatelessWidget {
   final _CalEntry entry;
   final String subjectName;
   final Color accent;
   final VoidCallback onTap;
 
-  const _PlannedRow({
+  const _EntryRow({
     required this.entry,
     required this.subjectName,
     required this.accent,
@@ -230,13 +280,17 @@ class _PlannedRow extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final firm = entry.isFirm;
+    final light = theme.brightness == Brightness.light;
+    final success = light ? StatusColors.successLight : StatusColors.successDark;
+
+    final done = entry.kind == _Kind.reviewed;
+    final projected = entry.kind == _Kind.projected;
     final c = SubjectPalette.readable(accent, theme.brightness);
 
     return AppCard(
       onTap: onTap,
-      accent: c,
-      muted: !firm,
+      accent: done ? success : c,
+      muted: projected,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
         AppSpacing.md + 2,
@@ -254,12 +308,12 @@ class _PlannedRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: tt.titleSmall?.copyWith(
-                    color: firm ? null : cs.onSurfaceVariant,
+                    color: projected ? cs.onSurfaceVariant : null,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '$subjectName · ${DateLabels.time(entry.due)}',
+                  '$subjectName · ${DateLabels.time(entry.when)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: tt.labelSmall,
@@ -268,12 +322,14 @@ class _PlannedRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          // "Projected" dates shift after every review, so they're marked
-          // rather than presented as commitments.
-          if (!firm)
-            AppPill('Projected', color: cs.onSurfaceVariant)
-          else
-            AppPill('Scheduled', color: cs.primary, tonal: true),
+          switch (entry.kind) {
+            _Kind.reviewed =>
+              AppPill('Reviewed', color: success, tonal: true),
+            _Kind.scheduled =>
+              AppPill('Scheduled', color: cs.primary, tonal: true),
+            _Kind.projected =>
+              AppPill('Forecast', color: cs.onSurfaceVariant),
+          },
         ],
       ),
     );

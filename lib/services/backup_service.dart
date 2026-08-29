@@ -93,8 +93,12 @@ class BackupService {
     try {
       final location = await resolveLocation();
       if (location == null) {
-        return const BackupResult.failure(
-            'No writable storage location was available.');
+        // Report what was actually tried and why each one failed, rather than
+        // a bare "backup failed" the user can't act on.
+        return BackupResult.failure(
+          'No writable storage location was available.\n\n'
+          'Tried:\n${_lastProbeLog.join('\n')}',
+        );
       }
 
       final dir = Directory(location.path);
@@ -283,14 +287,26 @@ class BackupService {
     return granted;
   }
 
+  /// Human-readable log of the last probe, surfaced when nothing was writable.
+  final List<String> _lastProbeLog = [];
+
   /// The directory we will actually write to, probing for write access.
   Future<BackupLocation?> resolveLocation({bool refresh = false}) async {
     if (!refresh && _cachedLocation != null) return _cachedLocation;
-    for (final candidate in await _candidateLocations()) {
-      if (await _isWritable(candidate.path)) {
+    _lastProbeLog.clear();
+
+    final candidates = await _candidateLocations();
+    if (candidates.isEmpty) {
+      _lastProbeLog.add('• no candidate directories could be resolved');
+    }
+    for (final candidate in candidates) {
+      final err = await _probe(candidate.path);
+      if (err == null) {
+        _lastProbeLog.add('• ${candidate.path} — OK');
         _cachedLocation = candidate;
         return candidate;
       }
+      _lastProbeLog.add('• ${candidate.path} — $err');
     }
     return null;
   }
@@ -342,7 +358,9 @@ class BackupService {
   /// Probe by actually creating the directory and writing a byte. Reasoning
   /// about API levels and permission combinations is far less reliable than
   /// just trying it.
-  Future<bool> _isWritable(String path) async {
+  ///
+  /// Returns null when writable, else a short reason.
+  Future<String?> _probe(String path) async {
     try {
       final dir = Directory(path);
       if (!await dir.exists()) {
@@ -351,9 +369,13 @@ class BackupService {
       final probe = File('$path/.write_probe');
       await probe.writeAsString('ok', flush: true);
       await probe.delete();
-      return true;
-    } catch (_) {
-      return false;
+      return null;
+    } on FileSystemException catch (e) {
+      // The OS message ("Permission denied", "Read-only file system") is the
+      // useful part; the full exception toString is mostly noise.
+      return e.osError?.message ?? e.message;
+    } catch (e) {
+      return '$e';
     }
   }
 }

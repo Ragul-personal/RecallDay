@@ -14,6 +14,7 @@ import '../widgets/delete_confirm.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/motion.dart';
 import '../widgets/tab_app_bar.dart';
+import '../widgets/topic_sheet.dart';
 import '../widgets/topic_card.dart';
 
 class TodayPage extends ConsumerWidget {
@@ -318,7 +319,9 @@ class _TopicSliver extends ConsumerWidget {
                 subjectName: s?.name ?? 'No subject',
                 accent: s?.color ?? cs.primary,
                 relativeLabel: DateLabels.relative(t.nextDueAt),
-                onTap: () => context.push('/topic/${t.id}'),
+                // Tapping opens the quick-look sheet; the full page is one
+                // button away inside it.
+                onTap: () => showTopicSheet(context, ref, t.id),
                 onComplete:
                     completable ? () => _complete(context, ref, t) : null,
               ),
@@ -335,27 +338,9 @@ class _TopicSliver extends ConsumerWidget {
     Topic t,
   ) async {
     HapticFeedback.selectionClick();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Are you sure you completed this topic?'),
-        content: Text(
-          '“${t.title}” will be marked as revised and scheduled for its next '
-          'review automatically.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Not yet'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Yes, completed'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
+    // Same wording as the sheet's button — one shared confirmation.
+    final ok = await confirmCompletion(context, t.title);
+    if (!ok || !context.mounted) return;
 
     HapticFeedback.lightImpact();
     final days =

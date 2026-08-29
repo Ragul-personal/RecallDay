@@ -210,10 +210,6 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage> {
                         '${topic.repetitions == 1 ? '' : 's'}',
                         icon: Icons.check_circle_outline_rounded,
                       ),
-                      AppPill(
-                        '${topic.estimatedMinutes} min',
-                        icon: Icons.timer_outlined,
-                      ),
                     ],
                   ),
                 ],

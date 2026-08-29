@@ -29,13 +29,14 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
   final _notes = TextEditingController();
 
   String? _subjectId;
+  // No longer editable in the form, but still round-tripped so editing a
+  // topic created by an older build doesn't silently reset these fields.
   Difficulty _difficulty = Difficulty.medium;
   Priority _priority = Priority.medium;
   int _minutes = 15;
   TimeOfDay _reminder = const TimeOfDay(hour: 19, minute: 0);
   bool _persistent = true;
   bool _busy = false;
-  bool _showMore = false;
   Topic? _existing;
 
   bool get _isEdit => widget.editId != null;
@@ -56,9 +57,6 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
         _minutes = t.estimatedMinutes;
         _reminder = TimeOfDay(hour: t.reminderHour, minute: t.reminderMinute);
         _persistent = t.persistentReminders;
-        // An editing user has already made these choices; show them rather
-        // than hiding them behind a disclosure.
-        _showMore = true;
       }
     }
   }
@@ -156,25 +154,48 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
                   ? _NoSubjectsNotice(
                       onCreate: () => context.push('/create/subject'),
                     )
-                  : Wrap(
-                      spacing: AppSpacing.sm,
-                      runSpacing: AppSpacing.sm,
-                      children: [
+                  // A dropdown rather than chips: it stays one row tall however
+                  // many subjects exist, and `_subjectId` is pre-filled when
+                  // you arrive from inside a subject, so it opens already set.
+                  : DropdownButtonFormField<String>(
+                      initialValue: _subjectId,
+                      isExpanded: true,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      decoration: const InputDecoration(
+                        hintText: 'Choose a subject',
+                      ),
+                      icon: const Icon(Icons.expand_more_rounded),
+                      items: [
                         for (final s in subjects)
-                          _SubjectChip(
-                            name: s.name,
-                            icon: SubjectPalette.iconFor(s.iconKey),
-                            color: SubjectPalette.readable(
-                              s.color,
-                              theme.brightness,
+                          DropdownMenuItem(
+                            value: s.id,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  SubjectPalette.iconFor(s.iconKey),
+                                  size: 18,
+                                  color: SubjectPalette.readable(
+                                    s.color,
+                                    theme.brightness,
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.md),
+                                Flexible(
+                                  child: Text(
+                                    s.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: tt.bodyMedium,
+                                  ),
+                                ),
+                              ],
                             ),
-                            selected: s.id == _subjectId,
-                            onTap: () {
-                              HapticFeedback.selectionClick();
-                              setState(() => _subjectId = s.id);
-                            },
                           ),
                       ],
+                      onChanged: (v) {
+                        HapticFeedback.selectionClick();
+                        setState(() => _subjectId = v);
+                      },
                     ),
             ),
 
@@ -192,140 +213,71 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
               ),
             ),
 
-            // Everything below has a sensible default, so it's collapsed by
-            // default — creating a topic should be title, subject, done.
-            if (!_showMore)
-              Center(
-                child: TextButton.icon(
-                  onPressed: () => setState(() => _showMore = true),
-                  icon: const Icon(Icons.tune_rounded, size: 18),
-                  label: const Text('More options'),
+            // Reminder time and the persistent-reminder switch are the two
+            // settings that actually change behaviour, so they sit inline
+            // rather than behind a disclosure. Difficulty, priority and
+            // estimated-time were removed entirely: the scheduling engine
+            // never read difficulty or priority, and the minutes figure was
+            // only ever echoed back on the card.
+            FormSection(
+              label: 'Reminder time',
+              child: AppCard(
+                onTap: () async {
+                  final t = await showTimePicker(
+                    context: context,
+                    initialTime: _reminder,
+                  );
+                  if (t != null) setState(() => _reminder = t);
+                },
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg,
+                  vertical: AppSpacing.lg,
                 ),
-              )
-            else ...[
-              FormSection(
-                label: 'Reminder time',
-                child: AppCard(
-                  onTap: () async {
-                    final t = await showTimePicker(
-                      context: context,
-                      initialTime: _reminder,
-                    );
-                    if (t != null) setState(() => _reminder = t);
-                  },
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.lg,
-                    vertical: AppSpacing.lg,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.schedule_rounded,
-                        size: 20,
-                        color: cs.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Text(
-                          _reminder.format(context),
-                          style: tt.bodyLarge,
-                        ),
-                      ),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 20,
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              FormSection(
-                label: 'Difficulty',
-                child: SegmentedButton<Difficulty>(
-                  segments: const [
-                    ButtonSegment(value: Difficulty.easy, label: Text('Easy')),
-                    ButtonSegment(
-                      value: Difficulty.medium,
-                      label: Text('Medium'),
-                    ),
-                    ButtonSegment(value: Difficulty.hard, label: Text('Hard')),
-                  ],
-                  selected: {_difficulty},
-                  showSelectedIcon: false,
-                  onSelectionChanged: (s) {
-                    HapticFeedback.selectionClick();
-                    setState(() => _difficulty = s.first);
-                  },
-                ),
-              ),
-
-              FormSection(
-                label: 'Priority',
-                child: SegmentedButton<Priority>(
-                  segments: const [
-                    ButtonSegment(value: Priority.low, label: Text('Low')),
-                    ButtonSegment(value: Priority.medium, label: Text('Normal')),
-                    ButtonSegment(value: Priority.high, label: Text('High')),
-                  ],
-                  selected: {_priority},
-                  showSelectedIcon: false,
-                  onSelectionChanged: (s) {
-                    HapticFeedback.selectionClick();
-                    setState(() => _priority = s.first);
-                  },
-                ),
-              ),
-
-              FormSection(
-                label: 'Estimated time',
                 child: Row(
                   children: [
+                    Icon(
+                      Icons.schedule_rounded,
+                      size: 20,
+                      color: cs.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: AppSpacing.md),
                     Expanded(
-                      child: Slider(
-                        value: _minutes.toDouble(),
-                        min: 5,
-                        max: 120,
-                        divisions: 23,
-                        label: '$_minutes min',
-                        onChanged: (v) => setState(() => _minutes = v.round()),
+                      child: Text(
+                        _reminder.format(context),
+                        style: tt.bodyLarge,
                       ),
                     ),
-                    SizedBox(
-                      width: 62,
-                      child: Text(
-                        '$_minutes min',
-                        textAlign: TextAlign.end,
-                        style: tt.labelMedium,
-                      ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
                   ],
                 ),
               ),
+            ),
 
-              FormSection(
-                label: 'Reminders',
-                child: AppCard(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    AppSpacing.sm,
-                    AppSpacing.sm,
-                    AppSpacing.sm,
-                  ),
-                  child: SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _persistent,
-                    onChanged: (v) => setState(() => _persistent = v),
-                    title: Text('Keep reminding me', style: tt.bodyMedium),
-                    subtitle: Text(
-                      'Re-send daily until the topic is reviewed.',
-                      style: tt.labelSmall,
-                    ),
+            FormSection(
+              label: 'Reminders',
+              child: AppCard(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                  AppSpacing.sm,
+                  AppSpacing.sm,
+                ),
+                child: SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _persistent,
+                  onChanged: (v) => setState(() => _persistent = v),
+                  title: Text('Keep reminding me', style: tt.bodyMedium),
+                  subtitle: Text(
+                    'Re-send daily until the topic is reviewed.',
+                    style: tt.labelSmall,
                   ),
                 ),
               ),
-            ],
+            ),
 
             const SizedBox(height: AppSpacing.sm),
             FilledButton(
@@ -341,71 +293,6 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
                 ),
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Subject picker as chips rather than a dropdown — with a handful of subjects
-/// they're all visible at once, and each carries its own colour and icon so the
-/// choice is recognisable rather than textual.
-class _SubjectChip extends StatelessWidget {
-  final String name;
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _SubjectChip({
-    required this.name,
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: AppMotion.fast,
-        curve: AppMotion.curve,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md + 2,
-          vertical: AppSpacing.md,
-        ),
-        decoration: BoxDecoration(
-          color: selected
-              ? color.withValues(alpha: 0.14)
-              : cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(
-            color: selected ? color : Colors.transparent,
-            width: 1.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: selected ? color : cs.onSurfaceVariant,
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Text(
-              name,
-              style: tt.labelMedium?.copyWith(
-                color: selected ? color : cs.onSurface,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-              ),
-            ),
           ],
         ),
       ),

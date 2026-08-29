@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -111,10 +113,30 @@ class _AppRoot extends ConsumerStatefulWidget {
   ConsumerState<_AppRoot> createState() => _AppRootState();
 }
 
-class _AppRootState extends ConsumerState<_AppRoot> {
+class _AppRootState extends ConsumerState<_AppRoot>
+    with WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Flush a backup whenever the app leaves the foreground. Mutations already
+    // schedule a debounced write, but that debounce can be cut short if the
+    // user backgrounds the app immediately after a change — and this also
+    // covers a session where nothing was edited but a review was recorded.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(BackupService.instance.flush());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     NotificationService.onAction = (topicId, action) {
       final router = ref.read(routerProvider);
       router.go('/topic/$topicId?action=${action ?? ''}');

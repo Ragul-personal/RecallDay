@@ -8,10 +8,13 @@ import 'app_card.dart';
 
 /// A topic row.
 ///
-/// The old version packed subject · minutes · "N× reviewed" onto one metadata
-/// line separated by middots, which wrapped and truncated on narrow phones.
-/// The row now leads with the subject (the thing you scan for), and the due
-/// label carries the urgency colour rather than a separate badge.
+/// The topic title is the primary line and the subject sits beneath it as
+/// context. (It was the other way round — subject first, title second — which
+/// buried the thing you're actually scanning for behind a label repeated on
+/// every row of a subject.)
+///
+/// Only the essentials are on the card; everything else lives in the detail
+/// sheet that opens on tap.
 class TopicCard extends StatelessWidget {
   final Topic topic;
   final String subjectName;
@@ -58,6 +61,17 @@ class TopicCard extends StatelessWidget {
                 : StatusColors.warningDark)
             : cs.onSurfaceVariant;
 
+    final statusLabel = mastered
+        ? 'Mastered'
+        : paused
+            ? 'Paused'
+            : relativeLabel;
+    final statusColor = mastered
+        ? success
+        : paused
+            ? cs.onSurfaceVariant
+            : dueColor;
+
     return AppCard(
       onTap: onTap,
       accent: mastered ? success : subjectColor,
@@ -78,77 +92,52 @@ class TopicCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        subjectName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: tt.labelSmall?.copyWith(
-                          color: subjectColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    if (paused) ...[
-                      const SizedBox(width: AppSpacing.sm),
-                      Icon(
-                        Icons.pause_circle_outline_rounded,
-                        size: 13,
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ],
-                    if (mastered) ...[
-                      const SizedBox(width: AppSpacing.sm),
-                      Icon(Icons.task_alt_rounded, size: 13, color: success),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 3),
+                // Primary: the topic itself.
                 Text(
                   topic.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: tt.titleSmall,
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: 4),
+                // Secondary: which subject it belongs to.
                 Row(
                   children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: subjectColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        subjectName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.labelSmall?.copyWith(color: subjectColor),
+                      ),
+                    ),
+                    Text('  ·  ', style: tt.labelSmall),
                     Icon(
                       mastered
                           ? Icons.check_circle_outline_rounded
-                          : Icons.schedule_rounded,
+                          : paused
+                              ? Icons.pause_circle_outline_rounded
+                              : Icons.schedule_rounded,
                       size: 12.5,
-                      color: mastered ? success : dueColor,
+                      color: statusColor,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      // A mastered topic has no next due date to report, so
-                      // showing its stale one would be misleading.
-                      mastered
-                          ? 'Mastered'
-                          : paused
-                              ? 'Paused'
-                              : relativeLabel,
+                      statusLabel,
                       style: tt.labelSmall?.copyWith(
-                        color: mastered ? success : dueColor,
+                        color: statusColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    Text(
-                      '  ·  ${topic.estimatedMinutes} min',
-                      style: tt.labelSmall,
-                    ),
-                    if (topic.repetitions > 0)
-                      Flexible(
-                        child: Text(
-                          '  ·  ${topic.repetitions}× done',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: tt.labelSmall,
-                        ),
-                      ),
                   ],
                 ),
               ],
@@ -196,7 +185,10 @@ class _CompleteTick extends StatelessWidget {
                 height: 26,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: color.withValues(alpha: 0.55), width: 2),
+                  border: Border.all(
+                    color: color.withValues(alpha: 0.55),
+                    width: 2,
+                  ),
                 ),
                 child: Icon(
                   Icons.check_rounded,
