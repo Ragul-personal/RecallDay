@@ -103,7 +103,7 @@ The hardest problem in this app, by a long way. See [`docs/NOTIFICATION_RELIABIL
 
 ## What's intentionally not here
 
-- **No accounts, no Firebase, no cloud sync.** Backups are plain JSON files on your own phone; nothing is uploaded. The app requests no network permissions.
+- **No accounts, no Firebase, no cloud sync.** Backups are plain JSON files on your own phone; nothing is uploaded. The one network permission is for `google_fonts` fetching the Inter typeface on first launch — no app data leaves the device.
 - **No analytics.** No telemetry leaves your device.
 - **No streaks-as-pressure.** The streak counter is informational; missing a day doesn't reset progress.
 - **No widgets.** Homescreen widgets need per-platform native modules — significant work, deferred.

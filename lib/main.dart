@@ -17,27 +17,91 @@ Future<void> main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  // 1) Local storage (Hive boxes for subjects, topics, reviews, prefs)
-  await StorageService.instance.init();
+  // Every step below is individually guarded, and runApp() ALWAYS runs.
+  //
+  // This used to be a chain of bare `await`s. Anything that threw — and a
+  // stripped notification icon in the release build did exactly that — escaped
+  // main() before runApp(), so the app launched to a black screen with no way
+  // to tell what went wrong. A broken subsystem should cost you that feature,
+  // not the whole app.
 
-  // 2) If this is a fresh install (or a reinstall) and a backup is sitting in
-  //    shared storage, pull it back in before the first frame so the user
-  //    doesn't see an empty app and assume the data is gone.
-  await BackupService.instance.autoRestoreIfEmpty();
-
-  // 3) Local notifications + timezone
-  await NotificationService.instance.init();
-
-  // 4) Background re-arm worker (handles OEM alarm cleanup + boot recovery).
-  //    Wrapped in try/catch so a Workmanager init failure on a quirky OEM
-  //    doesn't take down the app launch.
+  // 1) Local storage (Hive boxes for subjects, topics, reviews, prefs).
+  //    The one genuinely fatal dependency: with no database there is no app.
+  String? fatal;
   try {
-    await SchedulerBootstrap.initWorkmanager();
-  } catch (e) {
-    debugPrint('[main] workmanager init skipped: $e');
+    await StorageService.instance.init();
+  } catch (e, st) {
+    debugPrint('[main] storage init FAILED: $e\n$st');
+    fatal = 'Could not open local storage.\n\n$e';
   }
 
-  runApp(const ProviderScope(child: _AppRoot()));
+  if (fatal == null) {
+    // 2) If this is a fresh install (or a reinstall) and a backup is sitting in
+    //    shared storage, pull it back in before the first frame so the user
+    //    doesn't see an empty app and assume the data is gone.
+    try {
+      await BackupService.instance.autoRestoreIfEmpty();
+    } catch (e) {
+      debugPrint('[main] auto-restore skipped: $e');
+    }
+
+    // 3) Local notifications + timezone. Non-fatal: the app is still usable
+    //    for reviewing, it just won't remind you.
+    try {
+      await NotificationService.instance.init();
+    } catch (e) {
+      debugPrint('[main] notification init skipped: $e');
+    }
+
+    // 4) Background re-arm worker (handles OEM alarm cleanup + boot recovery).
+    try {
+      await SchedulerBootstrap.initWorkmanager();
+    } catch (e) {
+      debugPrint('[main] workmanager init skipped: $e');
+    }
+  }
+
+  runApp(fatal == null
+      ? const ProviderScope(child: _AppRoot())
+      : _StartupErrorApp(message: fatal));
+}
+
+/// Shown instead of a black screen when startup genuinely cannot continue, so
+/// the failure is legible on-device without needing a USB cable and `adb`.
+class _StartupErrorApp extends StatelessWidget {
+  final String message;
+  const _StartupErrorApp({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      themeMode: ThemeMode.dark,
+      darkTheme: AppTheme.dark(),
+      theme: AppTheme.light(),
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.error_outline, size: 40),
+                const SizedBox(height: 16),
+                const Text(
+                  'RecallDay could not start',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(child: SelectableText(message)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AppRoot extends ConsumerStatefulWidget {

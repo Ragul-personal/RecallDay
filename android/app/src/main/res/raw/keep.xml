@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Protects resources that only Dart code names, from `shrinkResources true`.
+
+  `ic_stat_recall` is passed to AndroidInitializationSettings as a plain STRING
+  from Dart. Nothing in the manifest, XML, or Java R class references it, so the
+  resource shrinker treats it as unused and strips it from the release APK —
+  after which flutter_local_notifications cannot resolve the icon and throws
+  during init. In a release build that surfaced as a black screen on launch,
+  because the throw happened before runApp().
+
+  ic_launcher doesn't need listing here (the manifest's android:icon references
+  it), but it's included as the documented fallback icon.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_recall,@drawable/ic_launcher" />

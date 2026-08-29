@@ -85,16 +85,33 @@ class NotificationService {
     }
 
     // `ic_stat_recall` is a transparent, monochrome silhouette. Android masks
-    // small icons to their alpha channel, so the old `ic_launcher` (an opaque
-    // filled square) rendered as a solid white block in the status bar.
-    const androidInit = AndroidInitializationSettings('ic_stat_recall');
-    const initSettings = InitializationSettings(android: androidInit);
-
-    await _fln.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _handleResponse,
-      onDidReceiveBackgroundNotificationResponse: _handleResponseBackground,
-    );
+    // small icons to their alpha channel, so `ic_launcher` (an opaque filled
+    // square) renders as a solid white block in the status bar.
+    //
+    // If that resource can't be resolved we fall back to `ic_launcher` rather
+    // than letting init throw. A missing drawable used to be fatal: the throw
+    // escaped main() before runApp(), so the whole app opened to a black
+    // screen just because a notification icon was absent. res/raw/keep.xml
+    // stops the release resource-shrinker stripping it in the first place;
+    // this is the second line of defence.
+    var initialized = false;
+    for (final icon in const ['ic_stat_recall', 'ic_launcher']) {
+      try {
+        await _fln.initialize(
+          InitializationSettings(android: AndroidInitializationSettings(icon)),
+          onDidReceiveNotificationResponse: _handleResponse,
+          onDidReceiveBackgroundNotificationResponse: _handleResponseBackground,
+        );
+        initialized = true;
+        break;
+      } catch (e) {
+        debugPrint('[notifications] init with icon "$icon" failed: $e');
+      }
+    }
+    if (!initialized) {
+      debugPrint('[notifications] plugin init failed; reminders unavailable');
+      return;
+    }
 
     // Create the channel up-front so per-notification scheduling never races
     // channel creation (a real bug we hit in early builds on Pixel 6).

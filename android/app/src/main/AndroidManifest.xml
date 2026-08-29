@@ -38,6 +38,14 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Required by google_fonts, which fetches the Inter font from
+         fonts.gstatic.com on first launch and caches it. No fonts are bundled
+         in pubspec.yaml, so without this the app falls back to the system
+         typeface. Flutter injects INTERNET into debug/profile builds
+         automatically, so dropping it here only ever broke release builds.
+         No app data is sent anywhere — this is font delivery only. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="RecallDay"
         android:name="${applicationName}"
