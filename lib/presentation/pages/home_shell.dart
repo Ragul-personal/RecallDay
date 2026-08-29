@@ -2,62 +2,58 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
-import 'analytics_page.dart';
-import 'calendar_page.dart';
-import 'subjects_page.dart';
-import 'today_page.dart';
-
-/// Bottom-tab shell.
+/// Persistent bottom-tab shell.
 ///
-/// Tabs are held in an [IndexedStack] so each keeps its scroll position and
-/// state while you move between them. Previously every destination called
-/// `context.go('/today')` etc., which tore down and rebuilt the whole page —
-/// scroll position was lost, the Hive stream re-subscribed, and there was no
-/// transition at all.
+/// The scaffold — navigation bar and floating action button — is owned here
+/// and stays mounted for the life of the session; only the branch body swaps.
 ///
-/// The route still changes (so deep links and the back button behave), but the
-/// pages themselves are no longer rebuilt from scratch.
-class HomeShell extends StatefulWidget {
-  final int tab;
-  const HomeShell({super.key, required this.tab});
-
-  @override
-  State<HomeShell> createState() => _HomeShellState();
-}
-
-class _HomeShellState extends State<HomeShell> {
-  static const _routes = ['/today', '/subjects', '/calendar', '/analytics'];
-
-  // Built lazily: an unvisited tab costs nothing until it's first opened.
-  final _built = <int, Widget>{};
-
-  Widget _page(int i) => _built.putIfAbsent(
-        i,
-        () => switch (i) {
-          0 => const TodayPage(),
-          1 => const SubjectsPage(),
-          2 => const CalendarPage(),
-          _ => const AnalyticsPage(),
-        },
-      );
+/// Previously each tab was its own top-level route rebuilding a whole
+/// `HomeShell`, so switching cross-faded the entire screen (the FAB visibly
+/// popping in and out) and reset each page's scroll position. Each page also
+/// carried its own FAB inside its body, so two different buttons animated
+/// past each other during the change.
+class HomeShell extends StatelessWidget {
+  final StatefulNavigationShell shell;
+  const HomeShell({super.key, required this.shell});
 
   void _select(int i) {
-    if (i == widget.tab) return;
-    HapticFeedback.selectionClick();
-    context.go(_routes[i]);
+    if (i != shell.currentIndex) HapticFeedback.selectionClick();
+    // initialLocation:true re-taps the current tab back to its root.
+    shell.goBranch(i, initialLocation: i == shell.currentIndex);
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: IndexedStack(
-          index: widget.tab,
-          children: [for (var i = 0; i < 4; i++) _page(i)],
+    // One FAB, owned by the shell, whose action follows the visible tab. Only
+    // Today and Subjects have a primary create action; Calendar and Progress
+    // are read-only, so it's simply absent there.
+    final fab = switch (shell.currentIndex) {
+      0 => _Fab(
+          key: const ValueKey('fab-topic'),
+          label: 'New topic',
+          onPressed: () => context.push('/create/topic'),
         ),
+      1 => _Fab(
+          key: const ValueKey('fab-subject'),
+          label: 'New subject',
+          onPressed: () => context.push('/create/subject'),
+        ),
+      _ => null,
+    };
+
+    return Scaffold(
+      body: SafeArea(bottom: false, child: shell),
+      // Cross-fade between the two labels rather than letting one button
+      // disappear and another appear.
+      floatingActionButton: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: ScaleTransition(scale: anim, child: child),
+        ),
+        child: fab ?? const SizedBox.shrink(key: ValueKey('fab-none')),
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
@@ -67,7 +63,7 @@ class _HomeShellState extends State<HomeShell> {
         child: SafeArea(
           top: false,
           child: NavigationBar(
-            selectedIndex: widget.tab,
+            selectedIndex: shell.currentIndex,
             onDestinationSelected: _select,
             destinations: const [
               NavigationDestination(
@@ -94,6 +90,21 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _Fab extends StatelessWidget {
+  final String label;
+  final VoidCallback onPressed;
+  const _Fab({super.key, required this.label, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton.extended(
+      onPressed: onPressed,
+      icon: const Icon(Icons.add_rounded),
+      label: Text(label),
     );
   }
 }

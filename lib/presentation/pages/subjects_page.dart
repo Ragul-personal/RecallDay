@@ -25,10 +25,8 @@ class SubjectsPage extends ConsumerWidget {
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
 
-    return Stack(
-      children: [
-        CustomScrollView(
-          slivers: [
+    return CustomScrollView(
+      slivers: [
             TabAppBar(
               title: 'Subjects',
               subtitle: subjects.isEmpty
@@ -91,17 +89,6 @@ class SubjectsPage extends ConsumerWidget {
                   },
                 ),
               ),
-          ],
-        ),
-        Positioned(
-          right: AppSpacing.gutter,
-          bottom: AppSpacing.gutter,
-          child: FloatingActionButton.extended(
-            onPressed: () => context.push('/create/subject'),
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('New subject'),
-          ),
-        ),
       ],
     );
   }

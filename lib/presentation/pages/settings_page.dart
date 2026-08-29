@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +22,7 @@ class SettingsPage extends ConsumerStatefulWidget {
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   PermissionReport? _perms;
   BackupLocation? _location;
+  String? _backupPath;
   bool _busy = false;
 
   @override
@@ -32,10 +34,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _refreshStatus() async {
     final perms = await NotificationService.instance.permissionStatus();
     final loc = await BackupService.instance.resolveLocation(refresh: true);
+    final file = await BackupService.instance.findBackupFile();
     if (!mounted) return;
     setState(() {
       _perms = perms;
       _location = loc;
+      _backupPath = file?.path;
     });
   }
 
@@ -46,6 +50,25 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ..showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _details(String title, String body) => showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(title),
+          content: SingleChildScrollView(
+            child: SelectableText(
+              body,
+              style: Theme.of(ctx).textTheme.bodySmall,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -55,7 +78,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
           children: [
             _appearance(),
-            _notifications(),
+            _reminders(),
             _backup(),
             _data(),
             _about(),
@@ -104,14 +127,22 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  // ---------------------------------------------------------- notifications
+  // -------------------------------------------------------------- reminders
 
-  Widget _notifications() {
+  Widget _reminders() {
     final p = _perms;
     final cs = Theme.of(context).colorScheme;
     final light = Theme.of(context).brightness == Brightness.light;
     final success =
         light ? StatusColors.successLight : StatusColors.successDark;
+    final warning =
+        light ? StatusColors.warningLight : StatusColors.warningDark;
+
+    // Nothing to fix once both permissions are held — the button that used to
+    // sit here always reported "Permissions refreshed" whether or not anything
+    // had changed, which made it look broken. It now appears only when there
+    // is genuinely something to grant.
+    final needsAction = p != null && (!p.canNotify || !p.exactAlarmGranted);
 
     return _Group(
       title: 'Reminders',
@@ -125,67 +156,111 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               AppSpacing.md,
             ),
             child: _StatusBanner(
-              ok: p.canNotify,
-              color: p.canNotify ? success : cs.error,
-              title: p.canNotify ? 'Reminders are on' : 'Reminders are blocked',
-              message: !p.canNotify
-                  ? 'Android is not letting RecallDay post notifications. '
-                      'Tap "Grant permissions" below.'
+              ok: p.canNotify && p.exactAlarmGranted,
+              color: !p.canNotify
+                  ? cs.error
                   : p.exactAlarmGranted
-                      ? 'Exact alarms allowed — reminders fire on time.'
-                      : 'Exact alarms are off, so Android may deliver reminders '
-                          'a few minutes late. Turn on "Alarms & reminders" to fix.',
+                      ? success
+                      : warning,
+              title: !p.canNotify
+                  ? 'Reminders are blocked'
+                  : p.exactAlarmGranted
+                      ? 'Reminders are on and exact'
+                      : 'Reminders are on, but may run late',
+              message: !p.canNotify
+                  ? 'Android is not letting RecallDay post notifications, so '
+                      'no reminder will ever appear.'
+                  : p.exactAlarmGranted
+                      ? 'Your reminders will fire at the time you set.'
+                      : 'Exact alarms are off, so Android may batch reminders '
+                          'and deliver them a few minutes late.',
             ),
           ),
-        ListTile(
-          leading: const Icon(Icons.notifications_active_outlined),
-          title: const Text('Grant permissions'),
-          subtitle: const Text('Open the system permission screens'),
-          onTap: _busy
-              ? null
-              : () async {
-                  await NotificationService.instance.requestPermissions();
-                  NotificationService.instance.invalidatePermissionCache();
-                  await ref.read(topicCommandsProvider).reArmAllNotifications();
-                  await _refreshStatus();
-                  _toast('Permissions refreshed');
-                },
-        ),
-        ListTile(
-          leading: const Icon(Icons.send_outlined),
-          title: const Text('Send a test reminder'),
-          subtitle: const Text('Check it appears with sound'),
-          onTap: _busy
-              ? null
-              : () async {
-                  final ok =
-                      await NotificationService.instance.showTestNotification();
-                  _toast(ok
-                      ? 'Sent — check your notification bar'
-                      : 'Android refused it. Grant permissions first.');
-                },
-        ),
-        ListTile(
-          leading: const Icon(Icons.alarm_on_outlined),
-          title: const Text('Re-arm all reminders'),
-          subtitle: const Text('Reschedule every active topic'),
-          onTap: _busy
-              ? null
-              : () async {
-                  await ref.read(topicCommandsProvider).reArmAllNotifications();
-                  _toast('Reminders rescheduled');
-                },
-        ),
+        if (needsAction)
+          ListTile(
+            leading: Icon(Icons.notifications_active_outlined, color: cs.primary),
+            title: Text(
+              p.canNotify ? 'Allow exact alarms' : 'Allow notifications',
+            ),
+            subtitle: const Text('Opens the Android permission screen'),
+            onTap: _busy ? null : _requestPermissions,
+          ),
         const ListTile(
           leading: Icon(Icons.battery_alert_outlined),
-          title: Text('Battery optimisation'),
+          title: Text('If reminders stop arriving'),
           subtitle: Text(
             'On Xiaomi, OnePlus and Samsung, exempt RecallDay from battery '
-            'optimisation in Android Settings → Apps → RecallDay → Battery.',
+            'optimisation in Android Settings → Apps → RecallDay → Battery. '
+            'RecallDay re-schedules its alarms every time you open it, so '
+            'they recover on their own once it is allowed to run.',
           ),
         ),
+        // Kept for future diagnosis but hidden from release builds — the
+        // notification path is working, so a test button is just clutter.
+        if (kDebugMode)
+          ListTile(
+            leading: const Icon(Icons.bug_report_outlined),
+            title: const Text('Send a test reminder (debug)'),
+            onTap: () async {
+              final ok =
+                  await NotificationService.instance.showTestNotification();
+              _toast(ok ? 'Test reminder sent' : 'Android refused it');
+            },
+          ),
       ],
     );
+  }
+
+  Future<void> _requestPermissions() async {
+    final before = _perms;
+    final report = await NotificationService.instance.requestPermissions();
+    NotificationService.instance.invalidatePermissionCache();
+    // A newly granted exact-alarm permission only takes effect on alarms
+    // scheduled from now on, so re-arm what's already pending.
+    await ref.read(topicCommandsProvider).reArmAllNotifications();
+    await _refreshStatus();
+    if (!mounted) return;
+
+    if (report.notificationsGranted && report.exactAlarmGranted) {
+      _toast('All set — reminders will fire on time');
+      return;
+    }
+    if (!report.notificationsGranted) {
+      // Android stops prompting after two denials; the settings screen is
+      // then the only way in, so say so rather than silently doing nothing.
+      final stuck =
+          await NotificationService.instance.notificationsPermanentlyDenied();
+      if (!mounted) return;
+      if (stuck || before?.notificationsGranted == false) {
+        final open = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Notifications are blocked'),
+            content: const Text(
+              'Android will not show the permission prompt again for this app. '
+              'Open RecallDay in Android Settings and turn Notifications on.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Not now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Open settings'),
+              ),
+            ],
+          ),
+        );
+        if (open == true) {
+          await NotificationService.instance.openSystemSettings();
+        }
+        return;
+      }
+      _toast('Notifications are still blocked');
+      return;
+    }
+    _toast('Notifications on · exact alarms still off');
   }
 
   // ----------------------------------------------------------------- backup
@@ -214,38 +289,42 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ok: durable,
               color: durable ? success : warning,
               title: durable
-                  ? 'Backups survive uninstall'
-                  : 'Backups will not survive uninstall',
+                  ? 'Saved automatically, survives uninstall'
+                  : 'Saved automatically — but not beyond uninstall',
               message: durable
-                  ? 'Saved to ${loc.label}. Reinstalling restores this '
-                      'automatically.'
-                  : 'Android is only letting RecallDay write to its own sandbox '
-                      '(${loc.label}), which is deleted on uninstall.',
+                  ? 'Every change is written to ${loc.label} straight away. '
+                      'Reinstalling RecallDay restores it.'
+                  : 'Every change is written to ${loc.label} straight away, '
+                      'but Android deletes that folder when the app is '
+                      'uninstalled. Allow shared storage below to keep it.',
             ),
           ),
         if (!durable)
           ListTile(
             leading: const Icon(Icons.folder_open_outlined),
             title: const Text('Allow shared storage'),
-            subtitle: const Text('Needed to back up outside the app sandbox'),
+            subtitle: const Text('Needed to keep backups through an uninstall'),
             onTap: _busy
                 ? null
                 : () async {
                     await BackupService.instance.requestStoragePermission();
+                    await BackupService.instance.flush();
                     await _refreshStatus();
-                    if (_location?.survivesUninstall == true) {
-                      await BackupService.instance.flush();
-                      _toast('Shared storage enabled — backup written');
-                    } else {
-                      _toast('Still sandboxed — grant "All files access" '
-                          'in Android settings');
-                    }
+                    if (!mounted) return;
+                    _toast(_location?.survivesUninstall == true
+                        ? 'Shared storage enabled — backup moved'
+                        : 'Still sandboxed — grant "All files access" '
+                            'in Android settings');
                   },
           ),
         ListTile(
           leading: const Icon(Icons.backup_outlined),
           title: const Text('Back up now'),
-          subtitle: const Text('Write a snapshot of everything'),
+          subtitle: Text(
+            _backupPath == null
+                ? 'No backup file yet'
+                : 'Last saved to ${_backupPath!.split('/').take(6).join('/')}…',
+          ),
           onTap: _busy
               ? null
               : () async {
@@ -255,48 +334,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   await _refreshStatus();
                   if (!mounted) return;
                   if (r.ok) {
-                    _toast('Backed up ${r.topics} topics '
-                        'to ${r.location?.label}');
+                    _toast('Backed up ${r.topics} topics · '
+                        '${r.subjects} subjects');
                   } else {
-                    // A snackbar truncates the diagnostic, which is the only
-                    // thing that makes a failure actionable.
-                    await showDialog<void>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text('Backup failed'),
-                        content: SingleChildScrollView(
-                          child: SelectableText(
-                            r.error ?? 'Unknown error',
-                            style: Theme.of(ctx).textTheme.bodySmall,
-                          ),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Close'),
-                          ),
-                        ],
-                      ),
-                    );
+                    await _details('Backup failed', r.error ?? 'Unknown error');
                   }
                 },
         ),
         ListTile(
           leading: const Icon(Icons.restore_outlined),
           title: const Text('Restore from backup'),
-          subtitle: const Text('Merge the saved snapshot back in'),
+          subtitle: const Text('Merge a saved snapshot back in'),
           onTap: _busy ? null : _restore,
-        ),
-        ListTile(
-          leading: const Icon(Icons.copy_all_outlined),
-          title: const Text('Copy backup as text'),
-          subtitle: const Text('Paste into a note as a second copy'),
-          onTap: () async {
-            await Clipboard.setData(
-              ClipboardData(text: BackupService.instance.buildSnapshotJson()),
-            );
-            _toast('Copied to clipboard');
-          },
         ),
       ],
     );
@@ -305,16 +354,26 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _restore() async {
     final file = await BackupService.instance.findBackupFile();
     if (!mounted) return;
+
     if (file == null) {
-      _toast('No backup file found');
+      // Name the folders actually searched — "no backup found" alone gives the
+      // user nothing to act on.
+      await _details(
+        'No backup found',
+        'RecallDay looked for recallday-backup.json in:\n\n'
+        '${BackupService.instance.searchedPaths.join('\n')}\n\n'
+        'Use "Back up now" first, or grant shared storage access so an '
+        'existing backup outside the app sandbox can be read.',
+      );
       return;
     }
 
     final ok = await confirmDelete(
       context,
-      title: 'Restore backup?',
-      message: 'This merges the snapshot at ${file.path} into your current '
-          'data. Topics with the same id are overwritten.',
+      title: 'Restore this backup?',
+      message: 'Reads ${file.path}\n\n'
+          'Subjects and topics with the same id are overwritten; anything '
+          'else you have now is kept.',
       confirmLabel: 'Restore',
       destructive: false,
     );
@@ -322,12 +381,21 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
     setState(() => _busy = true);
     try {
-      final summary = await BackupService.instance.restoreFromFile(merge: true);
+      final summary =
+          await BackupService.instance.restoreFromFile(merge: true);
       await ref.read(topicCommandsProvider).reArmAllNotifications();
       if (!mounted) return;
-      _toast(summary == null ? 'Nothing to restore' : 'Restored $summary');
+      if (summary == null || summary.isEmpty) {
+        await _details(
+          'Nothing restored',
+          'The file at ${file.path} was read but contained no subjects or '
+          'topics.',
+        );
+      } else {
+        _toast('Restored $summary');
+      }
     } catch (e) {
-      _toast('Restore failed: $e');
+      if (mounted) await _details('Restore failed', '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -341,24 +409,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       title: 'Data',
       children: [
         ListTile(
-          leading: const Icon(Icons.cleaning_services_outlined),
-          title: const Text('Compact storage'),
-          subtitle: const Text('Reclaim space from deleted topics'),
-          onTap: () async {
-            await StorageService.instance.compactAll();
-            _toast('Storage compacted');
-          },
-        ),
-        ListTile(
           leading: Icon(Icons.delete_forever_outlined, color: cs.error),
           title: Text('Reset all data', style: TextStyle(color: cs.error)),
-          subtitle: const Text('Your backup file is left untouched'),
+          subtitle: const Text('Deletes everything on this device'),
           onTap: () async {
             final ok = await confirmDelete(
               context,
               title: 'Reset all data?',
               message: 'This deletes every subject, topic and review on this '
-                  'device. Your backup file is not touched.',
+                  'device. Your backup file is not touched, so you can '
+                  'restore from it afterwards.',
               confirmLabel: 'Reset',
             );
             if (!ok) return;
@@ -426,9 +486,7 @@ class _StatusBanner extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            ok
-                ? Icons.check_circle_rounded
-                : Icons.error_outline_rounded,
+            ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
             color: color,
             size: 19,
           ),

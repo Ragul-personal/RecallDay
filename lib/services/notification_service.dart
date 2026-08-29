@@ -389,6 +389,30 @@ class NotificationService {
   /// call after the user has been sent to the system settings screen.
   void invalidatePermissionCache() => _exactAlarmsAllowed = null;
 
+  /// Open this app's system settings page.
+  ///
+  /// Android stops showing the permission dialog once a user has denied it
+  /// twice, so re-requesting silently does nothing and the only route left is
+  /// the settings screen.
+  Future<bool> openSystemSettings() async {
+    try {
+      return await openAppSettings();
+    } catch (e) {
+      debugPrint('[notifications] openAppSettings failed: $e');
+      return false;
+    }
+  }
+
+  /// True when Android will no longer prompt for notifications, so the user
+  /// has to grant it from settings by hand.
+  Future<bool> notificationsPermanentlyDenied() async {
+    try {
+      return await Permission.notification.isPermanentlyDenied;
+    } catch (_) {
+      return false;
+    }
+  }
+
   String _titleFor(Topic t) => 'Revise: ${t.title}';
 
   /// Body leads with the subject so the notification says *what to study and

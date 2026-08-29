@@ -32,10 +32,8 @@ class TodayPage extends ConsumerWidget {
     final pending = overdue.length + due.length;
     final isDark = theme.brightness == Brightness.dark;
 
-    return Stack(
-      children: [
-        CustomScrollView(
-          slivers: [
+    return CustomScrollView(
+      slivers: [
             TabAppBar(
               title: _greeting(),
               subtitle: DateLabels.fullDate(DateTime.now()),
@@ -118,19 +116,8 @@ class TodayPage extends ConsumerWidget {
                 ),
               ),
 
-            const SliverPadding(
-              padding: EdgeInsets.only(bottom: AppSpacing.bottomInset),
-            ),
-          ],
-        ),
-        Positioned(
-          right: AppSpacing.gutter,
-          bottom: AppSpacing.gutter,
-          child: FloatingActionButton.extended(
-            onPressed: () => context.push('/create/topic'),
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('New topic'),
-          ),
+        const SliverPadding(
+          padding: EdgeInsets.only(bottom: AppSpacing.bottomInset),
         ),
       ],
     );

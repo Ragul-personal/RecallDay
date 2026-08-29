@@ -12,9 +12,11 @@ import '../data/models/topic_model.dart';
 ///   • Each Review record: ~70 bytes.
 /// 1000 topics + 10000 reviews ≈ 1 MB on-disk. Fits comfortably on any phone.
 ///
-/// Hive uses an append-only log; deleted records leave gaps until [compactAll]
-/// is called. We expose this on the Settings page so the user can reclaim
-/// space manually after bulk deletions.
+/// Hive uses an append-only log, so deleted records leave gaps in the file
+/// until it is rewritten. Hive does that automatically once enough entries
+/// have been deleted, which is why there is no manual "compact storage"
+/// action — the button that used to exist could only ever do early what the
+/// database already does on its own.
 class StorageService {
   static const String subjectsBox = 'subjects';
   static const String topicsBox = 'topics';
@@ -52,13 +54,4 @@ class StorageService {
   /// orphan review rows without subjects or topics are not worth preserving.
   bool get isEmpty => subjects.isEmpty && topics.isEmpty;
 
-  /// Rewrite each box's underlying file to drop tombstoned records.
-  /// Cheap to run — Hive only re-writes if the gap ratio exceeds its threshold.
-  Future<void> compactAll() async {
-    await Future.wait([
-      subjects.compact(),
-      topics.compact(),
-      reviews.compact(),
-    ]);
-  }
 }

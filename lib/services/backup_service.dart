@@ -39,9 +39,10 @@ import 'storage_service.dart';
 /// -----------------
 /// Shared storage is only writable by raw path when the OS grants broad file
 /// access (MANAGE_EXTERNAL_STORAGE on Android 11+, WRITE_EXTERNAL_STORAGE
-/// below it). Rather than reason about API levels we *probe*: try each
-/// candidate directory in order and keep the first one we can actually write
-/// to. [BackupLocation.survivesUninstall] tells the UI whether the location we
+/// below it). Rather than reason about API levels, [writeBackup] simply tries
+/// each candidate directory in order and keeps the first that accepts the
+/// write, ending at app-private storage which always works.
+/// [BackupLocation.survivesUninstall] tells the UI whether the location it
 /// landed on genuinely outlives an uninstall, so Settings can be honest about
 /// it instead of promising durability it doesn't have.
 class BackupService {
@@ -64,7 +65,6 @@ class BackupService {
   ];
 
   BackupLocation? _cachedLocation;
-  Timer? _debounce;
 
   // ---------------------------------------------------------------- snapshot
 
@@ -89,8 +89,8 @@ class BackupService {
   /// Write the snapshot, trying each candidate location in turn.
   ///
   /// Never throws: returns a [BackupResult] describing what happened so the
-  /// caller can show it. Auto-backup calls this on a debounce, so a failure
-  /// here must not disturb the mutation that triggered it.
+  /// caller can show it. Auto-backup calls this after every mutation, so a
+  /// failure here must not disturb the change that triggered it.
   ///
   /// This *actually writes* rather than probing first and trusting the result.
   /// A probe is a poor proxy for the real thing: creating a directory and
@@ -157,28 +157,69 @@ class BackupService {
     }
   }
 
-  /// Debounced auto-backup. Mutations fire this; the file is rewritten a couple
-  /// of seconds after the user stops making changes rather than on every keystroke.
+  bool _writing = false;
+  bool _queued = false;
+
+  /// Back up now.
+  ///
+  /// Every mutation calls this and the file is rewritten immediately — a
+  /// subject, a topic or a recorded revision is on disk before the user has
+  /// moved on. It used to wait behind a 2-second debounce, which meant a
+  /// change followed straight away by force-closing the app was never written.
+  ///
+  /// Writes are serialised: if one is already running, a single follow-up is
+  /// queued (not one per call), so a burst of changes still ends with exactly
+  /// one write of the final state and the file is never written concurrently.
   void scheduleAutoBackup() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(seconds: 2), () {
-      unawaited(writeBackup());
-    });
+    unawaited(_runSerialised());
   }
 
-  /// Flush any pending debounced backup immediately.
-  Future<BackupResult> flush() {
-    _debounce?.cancel();
-    _debounce = null;
-    return writeBackup();
+  Future<void> _runSerialised() async {
+    if (_writing) {
+      _queued = true;
+      return;
+    }
+    _writing = true;
+    try {
+      do {
+        _queued = false;
+        await writeBackup();
+      } while (_queued);
+    } finally {
+      _writing = false;
+    }
+  }
+
+  /// Write now and report the outcome. Used by Settings' explicit button and
+  /// on app background.
+  Future<BackupResult> flush() async {
+    // Let any in-flight write settle so the two don't interleave.
+    while (_writing) {
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+    }
+    return _runGuarded();
+  }
+
+  Future<BackupResult> _runGuarded() async {
+    _writing = true;
+    try {
+      return await writeBackup();
+    } finally {
+      _writing = false;
+    }
   }
 
   // ---------------------------------------------------------------- restore
 
+  /// Folders inspected by the last [findBackupFile] call, for error messages.
+  final List<String> searchedPaths = [];
+
   /// The most recent backup file we can find, or null.
   Future<File?> findBackupFile() async {
+    searchedPaths.clear();
     for (final candidate in await _candidateLocations()) {
       final f = File('${candidate.path}/$_fileName');
+      searchedPaths.add(f.path);
       try {
         if (await f.exists()) return f;
       } catch (_) {
