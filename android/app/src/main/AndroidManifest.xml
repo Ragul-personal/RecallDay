@@ -25,18 +25,13 @@
     <!-- Battery optimization opt-out (we only PROMPT; we never silently disable) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Backups that survive uninstall.
-         Hive lives in the app sandbox, which Android deletes on uninstall, so
-         BackupService mirrors everything to a JSON file in shared storage
-         (Documents/RecallDay). Writing there by raw path needs broad file
-         access on Android 11+, and legacy storage permission below that.
-         All three are optional: BackupService probes for a writable directory
-         and falls back to sandboxed storage if they aren't granted. -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
+    <!-- No storage permissions.
+         Backups used to be written to /storage/emulated/0/Documents by raw
+         path, which needed broad file access and still failed unpredictably —
+         a write could succeed while the matching read returned EACCES. Export
+         now goes through the system share sheet and import through the file
+         picker, so the OS owns the destination and grants access per file.
+         Nothing here needs MANAGE_EXTERNAL_STORAGE. -->
 
     <!-- Required by google_fonts, which fetches the Inter font from
          fonts.gstatic.com on first launch and caches it. No fonts are bundled

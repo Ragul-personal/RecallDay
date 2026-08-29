@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
+import '../../core/utils/date_utils.dart';
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/storage_service.dart';
@@ -21,8 +22,7 @@ class SettingsPage extends ConsumerStatefulWidget {
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   PermissionReport? _perms;
-  BackupLocation? _location;
-  String? _backupPath;
+  DateTime? _lastAuto;
   bool _busy = false;
 
   @override
@@ -33,13 +33,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _refreshStatus() async {
     final perms = await NotificationService.instance.permissionStatus();
-    final loc = await BackupService.instance.resolveLocation(refresh: true);
-    final file = await BackupService.instance.findBackupFile();
+    final saved = await BackupService.instance.lastAutoBackupAt();
     if (!mounted) return;
     setState(() {
       _perms = perms;
-      _location = loc;
-      _backupPath = file?.path;
+      _lastAuto = saved;
     });
   }
 
@@ -266,136 +264,80 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   // ----------------------------------------------------------------- backup
 
   Widget _backup() {
-    final loc = _location;
-    final durable = loc?.survivesUninstall ?? false;
     final light = Theme.of(context).brightness == Brightness.light;
     final success =
         light ? StatusColors.successLight : StatusColors.successDark;
-    final warning =
-        light ? StatusColors.warningLight : StatusColors.warningDark;
+    final saved = _lastAuto;
 
     return _Group(
       title: 'Backup',
       children: [
-        if (loc != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.gutter,
-              0,
-              AppSpacing.gutter,
-              AppSpacing.md,
-            ),
-            child: _StatusBanner(
-              ok: durable,
-              color: durable ? success : warning,
-              title: durable
-                  ? 'Saved automatically, survives uninstall'
-                  : 'Saved automatically — but not beyond uninstall',
-              message: durable
-                  ? 'Every change is written to ${loc.label} straight away. '
-                      'Reinstalling RecallDay restores it.'
-                  : 'Every change is written to ${loc.label} straight away, '
-                      'but Android deletes that folder when the app is '
-                      'uninstalled. Allow shared storage below to keep it.',
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.gutter,
+            0,
+            AppSpacing.gutter,
+            AppSpacing.md,
           ),
-        if (!durable)
-          ListTile(
-            leading: const Icon(Icons.folder_open_outlined),
-            title: const Text('Allow shared storage'),
-            subtitle: const Text('Needed to keep backups through an uninstall'),
-            onTap: _busy
-                ? null
-                : () async {
-                    await BackupService.instance.requestStoragePermission();
-                    await BackupService.instance.flush();
-                    await _refreshStatus();
-                    if (!mounted) return;
-                    _toast(_location?.survivesUninstall == true
-                        ? 'Shared storage enabled — backup moved'
-                        : 'Still sandboxed — grant "All files access" '
-                            'in Android settings');
-                  },
+          child: _StatusBanner(
+            ok: saved != null,
+            color: success,
+            title: saved == null
+                ? 'Saving automatically'
+                : 'Saved automatically',
+            message: saved == null
+                ? 'Every change is saved on this device as you make it.'
+                : 'Every change is saved on this device as you make it — last '
+                    'at ${DateLabels.time(saved)}. Android deletes this copy '
+                    'if the app is uninstalled, so export a file to keep it.',
           ),
+        ),
         ListTile(
-          leading: const Icon(Icons.backup_outlined),
-          title: const Text('Back up now'),
-          subtitle: Text(
-            _backupPath == null
-                ? 'No backup file yet'
-                : 'Last saved to ${_backupPath!.split('/').take(6).join('/')}…',
+          leading: const Icon(Icons.ios_share_rounded),
+          title: const Text('Export backup file'),
+          subtitle: const Text(
+            'One .zip with everything, including attachments — save it to '
+            'Drive, Files, or send it to yourself',
           ),
           onTap: _busy
               ? null
               : () async {
                   setState(() => _busy = true);
-                  final r = await BackupService.instance.flush();
+                  final err = await BackupService.instance.exportArchive();
                   if (mounted) setState(() => _busy = false);
-                  await _refreshStatus();
                   if (!mounted) return;
-                  if (r.ok) {
-                    _toast('Backed up ${r.topics} topics · '
-                        '${r.subjects} subjects');
-                  } else {
-                    await _details('Backup failed', r.error ?? 'Unknown error');
-                  }
+                  if (err != null) await _details('Export failed', err);
                 },
         ),
         ListTile(
-          leading: const Icon(Icons.restore_outlined),
-          title: const Text('Restore from backup'),
-          subtitle: const Text('Merge a saved snapshot back in'),
-          onTap: _busy ? null : _restore,
+          leading: const Icon(Icons.file_open_outlined),
+          title: const Text('Import backup file'),
+          subtitle: const Text('Pick a .zip or .json backup to restore'),
+          onTap: _busy ? null : _import,
         ),
       ],
     );
   }
 
-  Future<void> _restore() async {
-    final file = await BackupService.instance.findBackupFile();
-    if (!mounted) return;
-
-    if (file == null) {
-      // Name the folders actually searched — "no backup found" alone gives the
-      // user nothing to act on.
-      await _details(
-        'No backup found',
-        'RecallDay looked for recallday-backup.json in:\n\n'
-        '${BackupService.instance.searchedPaths.join('\n')}\n\n'
-        'Use "Back up now" first, or grant shared storage access so an '
-        'existing backup outside the app sandbox can be read.',
-      );
-      return;
-    }
-
-    final ok = await confirmDelete(
-      context,
-      title: 'Restore this backup?',
-      message: 'Reads ${file.path}\n\n'
-          'Subjects and topics with the same id are overwritten; anything '
-          'else you have now is kept.',
-      confirmLabel: 'Restore',
-      destructive: false,
-    );
-    if (!ok || !mounted) return;
-
+  Future<void> _import() async {
     setState(() => _busy = true);
     try {
-      final summary =
-          await BackupService.instance.restoreFromFile(merge: true);
+      final summary = await BackupService.instance.importArchive(merge: true);
       await ref.read(topicCommandsProvider).reArmAllNotifications();
+      await _refreshStatus();
       if (!mounted) return;
-      if (summary == null || summary.isEmpty) {
+      if (summary.isEmpty) {
         await _details(
           'Nothing restored',
-          'The file at ${file.path} was read but contained no subjects or '
-          'topics.',
+          'That file was read but contained no subjects or topics.',
         );
       } else {
         _toast('Restored $summary');
       }
+    } on BackupCancelled {
+      // User dismissed the picker; nothing to report.
     } catch (e) {
-      if (mounted) await _details('Restore failed', '$e');
+      if (mounted) await _details('Import failed', '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

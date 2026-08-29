@@ -46,6 +46,12 @@ dependencies:
   # play in-app, YouTube plays in an embedded webview, other documents are
   # handed to whichever installed app claims the type.
   file_picker: ^8.1.4
+  # Backup export/import. `archive` is pure Dart (no native code) and bundles
+  # the database and every attachment into one portable .zip; `share_plus`
+  # hands that file to the system share sheet so the user saves it wherever
+  # they like — both avoid raw paths into shared storage entirely.
+  archive: ^3.6.1
+  share_plus: ^10.1.2
   video_player: ^2.9.2
   webview_flutter: ^4.10.0
   url_launcher: ^6.3.1

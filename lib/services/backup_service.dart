@@ -2,73 +2,74 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../data/models/review_model.dart';
 import '../data/models/subject_model.dart';
 import '../data/models/topic_model.dart';
+import '../domain/entities/attachment.dart';
 import 'storage_service.dart';
 
-/// Durable, uninstall-surviving backups.
+/// Backup and restore.
 ///
-/// Why this exists
-/// ---------------
-/// Hive stores its boxes under the app's *private* data directory. Android
-/// deletes that directory wholesale when the app is uninstalled — there is no
-/// flag that changes this. So "my data disappeared after reinstall" cannot be
-/// fixed inside the Hive layer; the data has to be mirrored somewhere the
-/// package manager doesn't own.
+/// Why this shape
+/// --------------
+/// Hive lives in the app's private directory, which Android deletes on
+/// uninstall, so durable copies have to leave the sandbox. The previous design
+/// did that by writing to `/storage/emulated/0/Documents/RecallDay` through
+/// raw `dart:io` paths. That is not a reliable contract on modern Android, and
+/// it failed three separate ways in practice:
 ///
-/// Two independent mechanisms now cover that:
+///   • A write could appear to succeed while the matching read failed with
+///     `PathAccessException … errno = 13`: without a real
+///     MANAGE_EXTERNAL_STORAGE grant, some operations pass through a media
+///     shim and others are refused outright.
+///   • `File.exists()` returns *false* rather than throwing when access is
+///     denied, so a present-but-forbidden backup looked like no backup at all
+///     and the first-launch prompt reported "none found".
+///   • The write-to-temp-then-rename dance left `.writing` files behind, and
+///     the OS silently rewrote their extension (`.writing.json` arrived as
+///     `.writing.js`) — plain evidence that the platform, not the filesystem,
+///     was deciding what happened.
 ///
-///  1. **Android Auto Backup** (configured in AndroidManifest +
-///     `res/xml/backup_rules.xml`). Google backs the Hive files up to the
-///     user's account and restores them automatically on reinstall. Free and
-///     invisible — but only when the device has backup enabled *and* the app
-///     is installed through Play or `adb restore`.
+/// So raw shared-storage paths are gone, along with the storage permissions
+/// they needed. Instead:
 ///
-///  2. **This service** — a plain JSON snapshot written to shared storage
-///     (`Documents/RecallDay/`), which survives uninstall because it is not
-///     inside the app sandbox. Rewritten automatically after every change and
-///     restorable from Settings, or automatically on first launch into an
-///     empty database.
+///   1. **Automatic** — after every change a JSON snapshot is written to
+///      app-private storage. This always succeeds, needs no permission, and is
+///      covered by Android Auto Backup, so a Play or `adb` reinstall restores
+///      it invisibly. It's also what the first-launch prompt reads.
+///   2. **Export** — one `.zip` holding the database *and every attachment*,
+///      handed to the system share sheet. The user saves it to Drive, Files,
+///      or sends it to themselves. The OS owns the destination, so there is no
+///      permission to be denied.
+///   3. **Import** — chosen through the system file picker, which grants read
+///      access to that one file. This is why importing works where reading a
+///      raw path did not.
 ///
-/// Location fallback
-/// -----------------
-/// Shared storage is only writable by raw path when the OS grants broad file
-/// access (MANAGE_EXTERNAL_STORAGE on Android 11+, WRITE_EXTERNAL_STORAGE
-/// below it). Rather than reason about API levels, [writeBackup] simply tries
-/// each candidate directory in order and keeps the first that accepts the
-/// write, ending at app-private storage which always works.
-/// [BackupLocation.survivesUninstall] tells the UI whether the location it
-/// landed on genuinely outlives an uninstall, so Settings can be honest about
-/// it instead of promising durability it doesn't have.
+/// Attachments were previously absent from backups entirely, so a restore
+/// produced topics pointing at files that no longer existed. The export
+/// carries them and the import rewrites every path for the new install.
 class BackupService {
   BackupService._();
   static final BackupService instance = BackupService._();
 
-  static const String _fileName = 'recallday-backup.json';
-  /// Keeps a .json extension — see the note in [_writeTo].
-  static const String _tempName = 'recallday-backup.writing.json';
-  static const String _folderName = 'RecallDay';
-  static const int _schemaVersion = 1;
+  /// The automatic snapshot, in app-private storage.
+  static const String _autoFileName = 'recallday-backup.json';
 
-  /// Public shared-storage roots, most preferred first. These live outside the
-  /// app sandbox, so uninstalling RecallDay does not remove them.
-  static const List<String> _sharedRoots = [
-    '/storage/emulated/0/Documents',
-    '/storage/emulated/0/Download',
-    '/sdcard/Documents',
-    '/sdcard/Download',
-  ];
+  /// Entry names inside an exported archive.
+  static const String _archiveData = 'data.json';
+  static const String _archiveAttachments = 'attachments';
 
-  BackupLocation? _cachedLocation;
+  static const int _schemaVersion = 2;
 
   // ---------------------------------------------------------------- snapshot
 
-  /// Everything the app knows, as a plain JSON-serialisable map.
+  /// Everything in the database, as a plain JSON-serialisable map.
   Map<String, dynamic> buildSnapshot() {
     final store = StorageService.instance;
     return {
@@ -84,95 +85,23 @@ class BackupService {
   String buildSnapshotJson() =>
       const JsonEncoder.withIndent('  ').convert(buildSnapshot());
 
-  // ------------------------------------------------------------------ write
+  // ------------------------------------------------------- automatic backup
 
-  /// Write the snapshot, trying each candidate location in turn.
-  ///
-  /// Never throws: returns a [BackupResult] describing what happened so the
-  /// caller can show it. Auto-backup calls this after every mutation, so a
-  /// failure here must not disturb the change that triggered it.
-  ///
-  /// This *actually writes* rather than probing first and trusting the result.
-  /// A probe is a poor proxy for the real thing: creating a directory and
-  /// touching a dot-file under `/storage/emulated/0/Documents` can succeed on
-  /// Android while the real write still fails with EACCES, which is exactly
-  /// the "Permission denied, errno = 13" users hit. Now a location that fails
-  /// is simply skipped and the next one is tried, ending at app-private
-  /// storage — which always works, so a backup effectively cannot fail.
-  Future<BackupResult> writeBackup() async {
-    final snapshot = buildSnapshot();
-    final json = const JsonEncoder.withIndent('  ').convert(snapshot);
-    final attempts = <String>[];
-
-    for (final location in await _candidateLocations()) {
-      final err = await _writeTo(location, json);
-      if (err == null) {
-        _cachedLocation = location;
-        return BackupResult.success(
-          path: '${location.path}/$_fileName',
-          location: location,
-          subjects: (snapshot['subjects'] as List).length,
-          topics: (snapshot['topics'] as List).length,
-          reviews: (snapshot['reviews'] as List).length,
-        );
-      }
-      attempts.add('• ${location.path}\n    $err');
-      debugPrint('[backup] ${location.path} failed: $err');
-    }
-
-    return BackupResult.failure(
-      'Could not write to any storage location.\n\n${attempts.join('\n')}',
-    );
-  }
-
-  /// Returns null on success, else a short reason.
-  Future<String?> _writeTo(BackupLocation location, String json) async {
-    try {
-      final dir = Directory(location.path);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-
-      final target = File('${location.path}/$_fileName');
-
-      // Write to a sibling temp file then rename, so an interrupted write
-      // can't leave a truncated backup where a good one used to be.
-      //
-      // The temp name keeps the .json extension on purpose. Android's scoped
-      // storage rejects files whose extension maps to no permitted MIME type
-      // in a shared collection, so the previous `recallday-backup.json.tmp`
-      // was refused outright on exactly the directory we most want to use.
-      final temp = File('${location.path}/$_tempName');
-      await temp.writeAsString(json, flush: true);
-      if (await target.exists()) {
-        await target.delete();
-      }
-      await temp.rename(target.path);
-      return null;
-    } on FileSystemException catch (e) {
-      // The OS message ("Permission denied") is the useful part.
-      return e.osError?.message ?? e.message;
-    } catch (e) {
-      return '$e';
-    }
+  Future<File> _autoFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/$_autoFileName');
   }
 
   bool _writing = false;
   bool _queued = false;
 
-  /// Back up now.
+  /// Save now.
   ///
-  /// Every mutation calls this and the file is rewritten immediately — a
-  /// subject, a topic or a recorded revision is on disk before the user has
-  /// moved on. It used to wait behind a 2-second debounce, which meant a
-  /// change followed straight away by force-closing the app was never written.
-  ///
-  /// Writes are serialised: if one is already running, a single follow-up is
-  /// queued (not one per call), so a burst of changes still ends with exactly
-  /// one write of the final state and the file is never written concurrently.
-  void scheduleAutoBackup() {
-    unawaited(_runSerialised());
-  }
+  /// Called after every mutation, so a subject, topic or recorded revision is
+  /// on disk before the user moves on. Writes are serialised with a single
+  /// queued follow-up: a burst of edits ends in exactly one write of the final
+  /// state, and the file is never written concurrently.
+  void scheduleAutoBackup() => unawaited(_runSerialised());
 
   Future<void> _runSerialised() async {
     if (_writing) {
@@ -183,66 +112,222 @@ class BackupService {
     try {
       do {
         _queued = false;
-        await writeBackup();
+        await writeAutoBackup();
       } while (_queued);
     } finally {
       _writing = false;
     }
   }
 
-  /// Write now and report the outcome. Used by Settings' explicit button and
-  /// on app background.
+  /// Write the automatic snapshot. App-private, so it cannot fail for
+  /// permission reasons.
+  Future<BackupResult> writeAutoBackup() async {
+    try {
+      final f = await _autoFile();
+      await f.writeAsString(buildSnapshotJson(), flush: true);
+      final store = StorageService.instance;
+      return BackupResult.success(
+        path: f.path,
+        subjects: store.subjects.length,
+        topics: store.topics.length,
+        reviews: store.reviews.length,
+      );
+    } catch (e, st) {
+      debugPrint('[backup] auto write failed: $e\n$st');
+      return BackupResult.failure('$e');
+    }
+  }
+
+  /// Write now and report. Used on app background and by Settings.
   Future<BackupResult> flush() async {
-    // Let any in-flight write settle so the two don't interleave.
     while (_writing) {
       await Future<void>.delayed(const Duration(milliseconds: 40));
     }
-    return _runGuarded();
-  }
-
-  Future<BackupResult> _runGuarded() async {
     _writing = true;
     try {
-      return await writeBackup();
+      return await writeAutoBackup();
     } finally {
       _writing = false;
     }
   }
 
-  // ---------------------------------------------------------------- restore
-
-  /// Folders inspected by the last [findBackupFile] call, for error messages.
-  final List<String> searchedPaths = [];
-
-  /// The most recent backup file we can find, or null.
-  Future<File?> findBackupFile() async {
-    searchedPaths.clear();
-    for (final candidate in await _candidateLocations()) {
-      final f = File('${candidate.path}/$_fileName');
-      searchedPaths.add(f.path);
-      try {
-        if (await f.exists()) return f;
-      } catch (_) {
-        // Unreadable candidate (permission revoked) — keep looking.
-      }
+  /// When the automatic snapshot was last written, or null if there isn't one.
+  Future<DateTime?> lastAutoBackupAt() async {
+    try {
+      final f = await _autoFile();
+      return await f.exists() ? (await f.stat()).modified : null;
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
-  /// Restore from a JSON string.
+  /// Whether there is an automatic snapshot worth offering to restore.
+  Future<bool> hasAutoBackup() async {
+    try {
+      return await (await _autoFile()).exists();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ------------------------------------------------------------------ export
+
+  /// Build the portable archive: database plus every attachment file.
+  Future<File> buildArchiveFile() async {
+    final archive = Archive();
+
+    final json = utf8.encode(buildSnapshotJson());
+    archive.addFile(ArchiveFile(_archiveData, json.length, json));
+
+    // Attachments go in under attachments/<topicId>/<filename>, mirroring
+    // their on-disk layout so import can put them straight back.
+    final docs = await getApplicationDocumentsDirectory();
+    final root = Directory('${docs.path}/$_archiveAttachments');
+    if (await root.exists()) {
+      await for (final entity in root.list(recursive: true)) {
+        if (entity is! File) continue;
+        try {
+          final bytes = await entity.readAsBytes();
+          final rel = entity.path.substring(root.path.length + 1);
+          archive.addFile(
+            ArchiveFile('$_archiveAttachments/$rel', bytes.length, bytes),
+          );
+        } catch (e) {
+          debugPrint('[backup] skipped attachment ${entity.path}: $e');
+        }
+      }
+    }
+
+    // Written to the cache directory: the share sheet copies it wherever the
+    // user chooses, so this copy is disposable.
+    final tmp = await getTemporaryDirectory();
+    final stamp = DateTime.now().toIso8601String().substring(0, 10);
+    final out = File('${tmp.path}/recallday-backup-$stamp.zip');
+    await out.writeAsBytes(ZipEncoder().encode(archive), flush: true);
+    return out;
+  }
+
+  /// Hand the archive to the system share sheet.
   ///
-  /// [merge] true keeps existing records and adds/overwrites by id; false wipes
-  /// the boxes first. Ids are stable UUIDs, so merging a backup of the same
-  /// database is idempotent.
-  Future<RestoreSummary> restoreFromJson(String jsonText,
-      {bool merge = true}) async {
+  /// Returns null on success, else a message. The OS owns the destination, so
+  /// no storage permission is involved and the user can put it anywhere.
+  Future<String?> exportArchive() async {
+    try {
+      final file = await buildArchiveFile();
+      final result = await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: 'RecallDay backup',
+      );
+      return result.status == ShareResultStatus.unavailable
+          ? 'No app was available to receive the backup.'
+          : null;
+    } catch (e, st) {
+      debugPrint('[backup] export failed: $e\n$st');
+      return '$e';
+    }
+  }
+
+  // ------------------------------------------------------------------ import
+
+  /// Let the user pick a backup and restore it.
+  ///
+  /// Accepts both the `.zip` export and a bare `.json` snapshot. The picker
+  /// grants read access to the chosen file, which is why this works where
+  /// reading a raw `/storage/emulated/0/...` path did not.
+  Future<RestoreSummary> importArchive({bool merge = true}) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) {
+      throw const BackupCancelled();
+    }
+
+    final f = picked.files.first;
+    final bytes =
+        f.bytes ?? (f.path != null ? await File(f.path!).readAsBytes() : null);
+    if (bytes == null) {
+      throw const FormatException('That file could not be read.');
+    }
+
+    if (f.name.toLowerCase().endsWith('.zip')) {
+      return restoreFromArchiveBytes(bytes, merge: merge);
+    }
+    return restoreFromJson(utf8.decode(bytes), merge: merge);
+  }
+
+  /// Restore a `.zip` export: database first, then the attachment files.
+  Future<RestoreSummary> restoreFromArchiveBytes(
+    List<int> bytes, {
+    bool merge = true,
+  }) async {
+    final Archive archive;
+    try {
+      archive = ZipDecoder().decodeBytes(bytes);
+    } catch (_) {
+      throw const FormatException('That file is not a readable backup.');
+    }
+
+    ArchiveFile? data;
+    for (final f in archive.files) {
+      if (f.name == _archiveData) data = f;
+    }
+    if (data == null) {
+      throw const FormatException(
+        'That archive has no data.json — is it a RecallDay backup?',
+      );
+    }
+
+    // Attachment files land in this install's own directory. The absolute
+    // paths recorded in the backup belong to the *old* install and don't exist
+    // here, so they're rewritten in [_rehomeAttachments].
+    final docs = await getApplicationDocumentsDirectory();
+    final newPaths = <String, String>{}; // '<topicId>/<file>' -> absolute
+    var files = 0;
+    for (final entry in archive.files) {
+      if (!entry.isFile) continue;
+      if (!entry.name.startsWith('$_archiveAttachments/')) continue;
+      try {
+        final rel = entry.name.substring(_archiveAttachments.length + 1);
+        final dest = File('${docs.path}/$_archiveAttachments/$rel');
+        await dest.parent.create(recursive: true);
+        await dest.writeAsBytes(entry.content as List<int>, flush: true);
+        newPaths[rel] = dest.path;
+        files++;
+      } catch (e) {
+        debugPrint('[backup] could not restore ${entry.name}: $e');
+      }
+    }
+
+    final summary = await restoreFromJson(
+      utf8.decode(data.content as List<int>),
+      merge: merge,
+      attachmentPaths: newPaths,
+    );
+    return summary.withFiles(files);
+  }
+
+  /// Restore from a JSON snapshot.
+  ///
+  /// [merge] true keeps existing records and adds/overwrites by id; false
+  /// wipes the boxes first. Ids are stable UUIDs, so merging a backup of the
+  /// same database is idempotent.
+  ///
+  /// [attachmentPaths] maps `<topicId>/<filename>` to the absolute path the
+  /// file was just written to, so restored topics point at files that exist.
+  Future<RestoreSummary> restoreFromJson(
+    String jsonText, {
+    bool merge = true,
+    Map<String, String> attachmentPaths = const {},
+  }) async {
     final decoded = jsonDecode(jsonText);
     if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('Backup file is not a JSON object.');
+      throw const FormatException('That file is not a RecallDay backup.');
     }
     if (decoded['subjects'] == null && decoded['topics'] == null) {
       throw const FormatException(
-          'Backup file has no "subjects" or "topics" — is this a RecallDay backup?');
+        'That backup has no subjects or topics in it.',
+      );
     }
 
     final store = StorageService.instance;
@@ -267,7 +352,8 @@ class BackupService {
 
     for (final raw in (decoded['topics'] as List? ?? const [])) {
       try {
-        final m = TopicModel.fromJson(raw as Map<String, dynamic>);
+        var m = TopicModel.fromJson(raw as Map<String, dynamic>);
+        m = _rehomeAttachments(m, attachmentPaths);
         await store.topics.put(m.id, m);
         topics++;
       } catch (e) {
@@ -295,187 +381,63 @@ class BackupService {
     );
   }
 
-  /// Restore from the on-disk backup file, if one exists.
-  Future<RestoreSummary?> restoreFromFile({bool merge = true}) async {
-    final f = await findBackupFile();
-    if (f == null) return null;
-    return restoreFromJson(await f.readAsString(), merge: merge);
+  /// Point a restored topic's file attachments at this install's paths.
+  ///
+  /// An app's private directory changes between installs, so absolute paths
+  /// inside a backup mean nothing here. Web links are left alone.
+  TopicModel _rehomeAttachments(TopicModel m, Map<String, String> paths) {
+    if (m.attachments.isEmpty || paths.isEmpty) return m;
+    final rebuilt = Attachment.decodeAll(m.attachments).map((a) {
+      if (!a.isLocalFile) return a;
+      final now = paths['${m.id}/${a.target.split('/').last}'];
+      if (now == null) return a;
+      return Attachment(
+        id: a.id,
+        kind: a.kind,
+        target: now,
+        name: a.name,
+        addedAt: a.addedAt,
+      );
+    }).toList();
+    m.attachments = Attachment.encodeAll(rebuilt);
+    return m;
   }
 
-  /// Called at startup. If the database is empty but a backup exists on shared
-  /// storage, pull it back in — this is the "I reinstalled the app and my
-  /// topics came back" path.
+  // ------------------------------------------------------------ auto restore
+
+  /// Restore the automatic snapshot if the database is empty.
+  ///
+  /// Covers "I cleared app data" and an Auto-Backup-restored reinstall. It
+  /// cannot cover a plain uninstall — that erases app-private storage,
+  /// including this file, which is exactly what the .zip export is for.
   Future<RestoreSummary?> autoRestoreIfEmpty() async {
     try {
       if (!StorageService.instance.isEmpty) return null;
-      final summary = await restoreFromFile(merge: true);
-      if (summary != null) {
-        debugPrint('[backup] auto-restored $summary');
-      }
-      return summary;
+      final f = await _autoFile();
+      if (!await f.exists()) return null;
+      return await restoreFromJson(await f.readAsString());
     } catch (e, st) {
       debugPrint('[backup] auto-restore failed: $e\n$st');
       return null;
     }
   }
-
-  // -------------------------------------------------------------- locations
-
-  /// Ask for the broad storage access that shared-folder writes need.
-  ///
-  /// Returns true if we ended up with *some* usable access. Callers should
-  /// re-run [resolveLocation] afterwards (pass `refresh: true`) because the
-  /// answer may have changed.
-  Future<bool> requestStoragePermission() async {
-    var granted = false;
-
-    // Android 11+ : broad file access is its own special permission.
-    try {
-      if (await Permission.manageExternalStorage.isGranted) {
-        granted = true;
-      } else {
-        granted = (await Permission.manageExternalStorage.request()).isGranted;
-      }
-    } catch (e) {
-      debugPrint('[backup] manageExternalStorage request failed: $e');
-    }
-
-    // Android 10 and below.
-    if (!granted) {
-      try {
-        granted = (await Permission.storage.request()).isGranted;
-      } catch (e) {
-        debugPrint('[backup] storage request failed: $e');
-      }
-    }
-
-    _cachedLocation = null;
-    return granted;
-  }
-
-  /// Human-readable log of the last probe, surfaced when nothing was writable.
-  final List<String> _lastProbeLog = [];
-
-  /// Where backups are being written, for display in Settings.
-  ///
-  /// [writeBackup] no longer depends on this — it just tries each location for
-  /// real. This still probes, so Settings can say up front whether the durable
-  /// location is reachable, but a wrong answer here can no longer break a
-  /// backup.
-  Future<BackupLocation?> resolveLocation({bool refresh = false}) async {
-    if (!refresh && _cachedLocation != null) return _cachedLocation;
-    _lastProbeLog.clear();
-
-    final candidates = await _candidateLocations();
-    if (candidates.isEmpty) {
-      _lastProbeLog.add('• no candidate directories could be resolved');
-    }
-    for (final candidate in candidates) {
-      final err = await _probe(candidate.path);
-      if (err == null) {
-        _lastProbeLog.add('• ${candidate.path} — OK');
-        _cachedLocation = candidate;
-        return candidate;
-      }
-      _lastProbeLog.add('• ${candidate.path} — $err');
-    }
-    return null;
-  }
-
-  Future<List<BackupLocation>> _candidateLocations() async {
-    final out = <BackupLocation>[];
-
-    if (Platform.isAndroid) {
-      for (final root in _sharedRoots) {
-        out.add(BackupLocation(
-          path: '$root/$_folderName',
-          label: root.contains('Download')
-              ? 'Downloads/$_folderName'
-              : 'Documents/$_folderName',
-          survivesUninstall: true,
-        ));
-      }
-    }
-
-    // App-scoped external storage: visible over USB, but the package manager
-    // deletes it on uninstall like any other app data.
-    try {
-      final ext = await getExternalStorageDirectory();
-      if (ext != null) {
-        out.add(BackupLocation(
-          path: '${ext.path}/$_folderName',
-          label: 'App storage (visible over USB)',
-          survivesUninstall: false,
-        ));
-      }
-    } catch (e) {
-      debugPrint('[backup] getExternalStorageDirectory failed: $e');
-    }
-
-    try {
-      final docs = await getApplicationDocumentsDirectory();
-      out.add(BackupLocation(
-        path: '${docs.path}/$_folderName',
-        label: 'Private app storage',
-        survivesUninstall: false,
-      ));
-    } catch (e) {
-      debugPrint('[backup] getApplicationDocumentsDirectory failed: $e');
-    }
-
-    return out;
-  }
-
-  /// Probe by actually creating the directory and writing a byte. Reasoning
-  /// about API levels and permission combinations is far less reliable than
-  /// just trying it.
-  ///
-  /// Returns null when writable, else a short reason.
-  Future<String?> _probe(String path) async {
-    try {
-      final dir = Directory(path);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-      final probe = File('$path/.write_probe');
-      await probe.writeAsString('ok', flush: true);
-      await probe.delete();
-      return null;
-    } on FileSystemException catch (e) {
-      // The OS message ("Permission denied", "Read-only file system") is the
-      // useful part; the full exception toString is mostly noise.
-      return e.osError?.message ?? e.message;
-    } catch (e) {
-      return '$e';
-    }
-  }
 }
 
-class BackupLocation {
-  final String path;
-  final String label;
-
-  /// True only for directories outside the app sandbox. The UI uses this to
-  /// tell the user whether their backup would actually survive an uninstall.
-  final bool survivesUninstall;
-
-  const BackupLocation({
-    required this.path,
-    required this.label,
-    required this.survivesUninstall,
-  });
+/// Thrown when the user dismisses the file picker.
+class BackupCancelled implements Exception {
+  const BackupCancelled();
+  @override
+  String toString() => 'Cancelled';
 }
 
 class BackupResult {
   final bool ok;
   final String? path;
-  final BackupLocation? location;
   final String? error;
   final int subjects, topics, reviews;
 
   const BackupResult.success({
     required this.path,
-    required this.location,
     required this.subjects,
     required this.topics,
     required this.reviews,
@@ -485,25 +447,34 @@ class BackupResult {
   const BackupResult.failure(this.error)
       : ok = false,
         path = null,
-        location = null,
         subjects = 0,
         topics = 0,
         reviews = 0;
 }
 
 class RestoreSummary {
-  final int subjects, topics, reviews, skipped;
+  final int subjects, topics, reviews, skipped, files;
+
   const RestoreSummary({
     required this.subjects,
     required this.topics,
     required this.reviews,
     required this.skipped,
+    this.files = 0,
   });
+
+  RestoreSummary withFiles(int n) => RestoreSummary(
+        subjects: subjects,
+        topics: topics,
+        reviews: reviews,
+        skipped: skipped,
+        files: n,
+      );
 
   bool get isEmpty => subjects == 0 && topics == 0 && reviews == 0;
 
   @override
-  String toString() =>
-      '$subjects subjects, $topics topics, $reviews reviews'
+  String toString() => '$subjects subjects, $topics topics, $reviews reviews'
+      '${files > 0 ? ', $files files' : ''}'
       '${skipped > 0 ? ' ($skipped skipped)' : ''}';
 }

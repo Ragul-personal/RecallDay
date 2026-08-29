@@ -31,11 +31,8 @@ class _SplashPageState extends ConsumerState<SplashPage> {
     // Local-only build: no auth gate, just permissions and a possible restore.
     await NotificationService.instance.requestPermissions();
 
-    // Empty database — either a first run or a reinstall. `main()` already
-    // tried an auto-restore, but on a reinstall the storage permission has
-    // been reset, so the backup file in shared storage was unreadable then.
-    // Ask for access now and try again, so a reinstall brings the user's
-    // topics back instead of dropping them into an empty app.
+    // Empty database on launch: offer to restore the automatic snapshot
+    // rather than dropping the user into an empty app.
     if (StorageService.instance.isEmpty) {
       await _offerRestore();
     }
@@ -45,22 +42,22 @@ class _SplashPageState extends ConsumerState<SplashPage> {
   }
 
   Future<void> _offerRestore() async {
-    // We can't just probe for the backup file: on Android 11+ an unreadable
-    // path and a missing one are indistinguishable (File.exists() returns
-    // false either way), so "is there a backup?" can't be answered without
-    // first holding the permission. Rather than shove a returning user AND a
-    // brand-new user through a full-screen system settings page, ask.
+    // Only offered when there is genuinely something to restore. The previous
+    // version asked unconditionally and then usually reported "no backup",
+    // because it was probing a shared-storage path it had no permission to
+    // read — File.exists() returns false on a denied read rather than
+    // throwing, so a present file looked absent.
+    if (!await BackupService.instance.hasAutoBackup()) return;
     if (!mounted) return;
-    final wantsRestore = await showDialog<bool>(
+
+    final restore = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('Restore your data?'),
         content: const Text(
-          'No topics found on this device.\n\n'
-          'If you have used RecallDay before, it can bring your subjects, '
-          'topics and review history back from the backup file on your phone '
-          'storage. Android needs file access to read it.',
+          'No topics found, but RecallDay has a saved copy on this device. '
+          'Would you like to restore it?',
         ),
         actions: [
           TextButton(
@@ -74,18 +71,13 @@ class _SplashPageState extends ConsumerState<SplashPage> {
         ],
       ),
     );
+    if (restore != true) return;
 
-    if (wantsRestore != true) return;
-    if (mounted) setState(() => _status = 'Looking for a backup…');
-
-    if (await BackupService.instance.findBackupFile() == null) {
-      await BackupService.instance.requestStoragePermission();
-    }
-
+    if (mounted) setState(() => _status = 'Restoring…');
     final summary = await BackupService.instance.autoRestoreIfEmpty();
     if (summary == null || summary.isEmpty) {
-      if (mounted) setState(() => _status = 'No backup found');
-      await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (mounted) setState(() => _status = 'Nothing to restore');
+      await Future<void>.delayed(const Duration(milliseconds: 700));
       return;
     }
 
