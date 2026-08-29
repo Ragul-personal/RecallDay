@@ -102,9 +102,58 @@ class TopicCommands {
   String? _subjectName(String subjectId) =>
       ref.read(subjectRepositoryProvider).byId(subjectId)?.name;
 
-  /// Mirror the database to shared storage after anything changes, so an
-  /// uninstall/reinstall can bring the data back. Debounced and failure-tolerant.
-  void _backup() => BackupService.instance.scheduleAutoBackup();
+  /// Mirror the database after anything changes, and re-evaluate the two daily
+  /// summaries — whether they should fire at all depends on what's due.
+  void _backup() {
+    BackupService.instance.scheduleAutoBackup();
+    unawaited(refreshDailyDigests());
+  }
+
+  /// Re-arm the 6am and 8pm summaries for their next occurrence.
+  ///
+  /// Both are cancelled when nothing is outstanding, so the user is never told
+  /// they have zero topics to revise. They're recomputed after every change and
+  /// on app start rather than scheduled once, because "is there anything to
+  /// say?" is only answerable from the data as it stands.
+  Future<void> refreshDailyDigests() async {
+    final topics = ref
+        .read(topicRepositoryProvider)
+        .all()
+        .where((t) => t.status == TopicStatus.active)
+        .toList();
+
+    final now = DateTime.now();
+    DateTime nextAt(int hour) {
+      final today = DateTime(now.year, now.month, now.day, hour);
+      return today.isAfter(now) ? today : today.add(const Duration(days: 1));
+    }
+
+    final morning = nextAt(6);
+    final evening = nextAt(20);
+
+    // Morning: everything scheduled for that whole day.
+    final endOfMorningDay =
+        DateTime(morning.year, morning.month, morning.day, 23, 59, 59);
+    final morningCount = topics
+        .where((t) => !t.nextDueAt.isAfter(endOfMorningDay))
+        .length;
+
+    // Evening: only what is still outstanding by 8pm. Revising pushes
+    // nextDueAt forward, so anything still due at that moment is unfinished.
+    final eveningCount =
+        topics.where((t) => !t.nextDueAt.isAfter(evening)).length;
+
+    await NotificationService.instance.scheduleDigest(
+      slot: DigestSlot.morning,
+      when: morning,
+      count: morningCount,
+    );
+    await NotificationService.instance.scheduleDigest(
+      slot: DigestSlot.evening,
+      when: evening,
+      count: eveningCount,
+    );
+  }
 
   /// Re-arm alarms for every active topic. Android drops scheduled alarms on
   /// reboot, app update, and OEM battery sweeps, and the app previously only
@@ -122,6 +171,7 @@ class TopicCommands {
       // due, so don't also shower them with notifications for it.
       showOverdueImmediately: false,
     );
+    await refreshDailyDigests();
   }
 
   /// Create or update a subject. Routed through here (rather than the repo

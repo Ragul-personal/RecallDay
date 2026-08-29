@@ -28,11 +28,21 @@ class _SplashPageState extends ConsumerState<SplashPage> {
   }
 
   Future<void> _bootstrap() async {
+    // First run: hand over to onboarding, which asks new-vs-existing and takes
+    // the backup folder. No point requesting notification permission or
+    // offering a restore first — onboarding covers the restore itself, and a
+    // permission prompt before the welcome screen has no context.
+    if (!StorageService.instance.onboarded) {
+      if (!mounted) return;
+      context.go('/welcome');
+      return;
+    }
+
     // Local-only build: no auth gate, just permissions and a possible restore.
     await NotificationService.instance.requestPermissions();
 
-    // Empty database on launch: offer to restore the automatic snapshot
-    // rather than dropping the user into an empty app.
+    // Empty database on launch: offer to restore rather than dropping the
+    // user into an empty app.
     if (StorageService.instance.isEmpty) {
       await _offerRestore();
     }

@@ -57,6 +57,11 @@ class NotificationService {
   static const String _channelDesc =
       'Reminders to revise topics on your spaced-repetition schedule.';
 
+  /// Fixed ids for the two daily digests. Well clear of the per-topic id
+  /// blocks below (max 99999 * 16 ≈ 1.6M).
+  static const int _morningDigestId = 1900000001;
+  static const int _eveningDigestId = 1900000002;
+
   /// Slots reserved per topic: 1 primary + [_followUpDays] daily re-fires.
   static const int _followUpDays = 14;
   static const int _idsPerTopic = 16; // next power of two ≥ 1 + _followUpDays
@@ -279,6 +284,65 @@ class NotificationService {
         subjectName: subjectNames[t.subjectId],
         showOverdueImmediately: showOverdueImmediately,
       );
+    }
+  }
+
+  /// The two daily summaries: a morning nudge and an evening catch-up.
+  ///
+  /// These aren't per-topic alarms, so they can't be scheduled once and left —
+  /// whether they should fire at all depends on the data at the time. Instead
+  /// the next occurrence is (re)scheduled whenever anything changes and on
+  /// every app start, and cancelled outright when [count] is zero. That way
+  /// the user is never greeted with "you have 0 topics to revise".
+  Future<void> scheduleDigest({
+    required DigestSlot slot,
+    required DateTime when,
+    required int count,
+  }) async {
+    final id = slot == DigestSlot.morning ? _morningDigestId : _eveningDigestId;
+    try {
+      await init();
+      await _fln.cancel(id);
+      if (count <= 0) return;
+
+      final plural = count == 1 ? '' : 's';
+      final title = slot == DigestSlot.morning
+          ? 'Good morning'
+          : 'Good evening';
+      final body = slot == DigestSlot.morning
+          ? 'You have $count topic$plural to revise today. A good time to '
+              'start while it is fresh.'
+          : '$count revision$plural still waiting today. A few minutes now and '
+              'you are done.';
+
+      final scheduled = tz.TZDateTime.from(when, tz.local);
+      if (!scheduled.isAfter(tz.TZDateTime.now(tz.local))) return;
+
+      final mode = await _preferredScheduleMode();
+      try {
+        await _fln.zonedSchedule(
+          id, title, body, scheduled,
+          _details(title: title, body: body),
+          androidScheduleMode: mode,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (e) {
+        if (mode == AndroidScheduleMode.exactAllowWhileIdle) {
+          _exactAlarmsAllowed = false;
+          await _fln.zonedSchedule(
+            id, title, body, scheduled,
+            _details(title: title, body: body),
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+        } else {
+          rethrow;
+        }
+      }
+    } catch (e) {
+      debugPrint('[notifications] digest ($slot) failed: $e');
     }
   }
 
@@ -516,6 +580,9 @@ class NotificationService {
     }
   }
 }
+
+/// Which of the two daily summaries a notification is.
+enum DigestSlot { morning, evening }
 
 class PermissionReport {
   final bool notificationsGranted;

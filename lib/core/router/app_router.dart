@@ -7,6 +7,7 @@ import '../../presentation/pages/calendar_page.dart';
 import '../../presentation/pages/create_subject_page.dart';
 import '../../presentation/pages/create_topic_page.dart';
 import '../../presentation/pages/home_shell.dart';
+import '../../presentation/pages/onboarding_page.dart';
 import '../../presentation/pages/settings_page.dart';
 import '../../presentation/pages/splash_page.dart';
 import '../../presentation/pages/subject_detail_page.dart';
@@ -22,6 +23,11 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/splash',
     routes: [
       GoRoute(path: '/splash', builder: (_, __) => const SplashPage()),
+      GoRoute(
+        path: '/welcome',
+        parentNavigatorKey: _rootKey,
+        builder: (_, __) => const OnboardingPage(),
+      ),
 
       // The four tabs live in a persistent shell.
       //

@@ -49,6 +49,27 @@ class StorageService {
   Box<ReviewModel> get reviews => Hive.box<ReviewModel>(reviewsBox);
   Box get prefs => Hive.box(prefsBox);
 
+  static const String _onboardedKey = 'onboarding_complete';
+
+  /// Whether first-run setup has been completed. Gates the welcome flow.
+  bool get onboarded {
+    try {
+      return prefs.get(_onboardedKey) == true;
+    } catch (_) {
+      // If prefs can't be read, treat it as done rather than trapping the user
+      // in onboarding forever.
+      return true;
+    }
+  }
+
+  Future<void> markOnboarded() async {
+    try {
+      await prefs.put(_onboardedKey, true);
+    } catch (_) {
+      // Non-fatal: worst case the welcome screen appears once more.
+    }
+  }
+
   /// True when there is nothing to lose — used at startup to decide whether to
   /// pull a backup back in after a reinstall. Reviews are deliberately excluded:
   /// orphan review rows without subjects or topics are not worth preserving.
