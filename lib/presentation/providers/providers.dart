@@ -14,6 +14,7 @@ import '../../domain/usecases/spaced_repetition_engine.dart';
 import '../../services/attachment_service.dart';
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/storage_service.dart';
 
 // ---------- core singletons ----------
 final uuidProvider = Provider<Uuid>((_) => const Uuid());
@@ -305,6 +306,32 @@ class TopicCommands {
     await NotificationService.instance
         .scheduleForTopic(updated, subjectName: _subjectName(updated.subjectId));
     _backup();
+  }
+
+  /// Wipe every subject, topic, review and attachment file.
+  ///
+  /// Uses `deleteAll(keys)` rather than `Box.clear()`: Hive's clear() empties
+  /// the box without emitting change events, so `box.watch()` never fired and
+  /// the screens kept rendering data that was already gone — the reset looked
+  /// like it had done nothing until the app was restarted.
+  ///
+  /// The automatic snapshot is rewritten afterwards so it reflects the empty
+  /// database; otherwise the next launch would offer to restore exactly what
+  /// the user just deleted.
+  Future<void> resetAll() async {
+    await NotificationService.instance.cancelAll();
+
+    final topicRepo = ref.read(topicRepositoryProvider);
+    for (final t in topicRepo.all()) {
+      await AttachmentService.instance.deleteAllFor(t.id);
+    }
+
+    final store = StorageService.instance;
+    await store.topics.deleteAll(store.topics.keys.toList());
+    await store.subjects.deleteAll(store.subjects.keys.toList());
+    await store.reviews.deleteAll(store.reviews.keys.toList());
+
+    await BackupService.instance.flush();
   }
 
   /// Replace a topic's attachment list (add or remove from the detail page).

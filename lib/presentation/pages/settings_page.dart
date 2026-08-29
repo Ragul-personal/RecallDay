@@ -8,7 +8,6 @@ import '../../core/theme/app_tokens.dart';
 import '../../core/utils/date_utils.dart';
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/storage_service.dart';
 import '../providers/providers.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/app_logo.dart';
@@ -358,16 +357,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             final ok = await confirmDelete(
               context,
               title: 'Reset all data?',
-              message: 'This deletes every subject, topic and review on this '
-                  'device. Your backup file is not touched, so you can '
-                  'restore from it afterwards.',
+              message: 'This deletes every subject, topic, review and '
+                  'attachment on this device, and clears the automatic saved '
+                  'copy too. Export a backup file first if you want to keep '
+                  'any of it — an exported .zip is not affected.',
               confirmLabel: 'Reset',
             );
             if (!ok) return;
-            await NotificationService.instance.cancelAll();
-            await StorageService.instance.subjects.clear();
-            await StorageService.instance.topics.clear();
-            await StorageService.instance.reviews.clear();
+            await ref.read(topicCommandsProvider).resetAll();
+            await _refreshStatus();
             _toast('All data cleared');
           },
         ),

@@ -151,7 +151,11 @@ class _DayProgressCard extends StatelessWidget {
 
     final total = pending + doneToday;
     final progress = total == 0 ? 1.0 : doneToday / total;
-    final allDone = pending == 0;
+    // Three distinct states, not two. "All caught up" is a reward for having
+    // cleared something; saying it on a day with nothing scheduled claims
+    // credit the user didn't earn.
+    final nothingDue = pending == 0 && doneToday == 0;
+    final allDone = pending == 0 && doneToday > 0;
 
     final success = theme.brightness == Brightness.light
         ? StatusColors.successLight
@@ -170,16 +174,20 @@ class _DayProgressCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      allDone ? 'All caught up' : '$pending to revise',
+                      nothingDue
+                          ? 'No revisions today'
+                          : allDone
+                              ? 'All caught up'
+                              : '$pending to revise',
                       style: tt.headlineSmall,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      allDone
-                          ? doneToday > 0
+                      nothingDue
+                          ? 'Nothing is scheduled for today'
+                          : allDone
                               ? '$doneToday reviewed today'
-                              : 'Nothing due right now'
-                          : '$doneToday of $total done today',
+                              : '$doneToday of $total done today',
                       style: tt.bodySmall,
                     ),
                   ],
@@ -194,23 +202,27 @@ class _DayProgressCard extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: AppSpacing.lg),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: progress),
-              duration: AppMotion.slow,
-              curve: AppMotion.curve,
-              builder: (_, v, __) => LinearProgressIndicator(
-                value: v,
-                minHeight: 6,
-                backgroundColor: cs.primary.withValues(alpha: 0.12),
-                valueColor: AlwaysStoppedAnimation(
-                  allDone ? success : cs.primary,
+          // No bar on a day with nothing scheduled: a full progress bar there
+          // would read as an achievement the user didn't earn.
+          if (!nothingDue) ...[
+            const SizedBox(height: AppSpacing.lg),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: progress),
+                duration: AppMotion.slow,
+                curve: AppMotion.curve,
+                builder: (_, v, __) => LinearProgressIndicator(
+                  value: v,
+                  minHeight: 6,
+                  backgroundColor: cs.primary.withValues(alpha: 0.12),
+                  valueColor: AlwaysStoppedAnimation(
+                    allDone ? success : cs.primary,
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
