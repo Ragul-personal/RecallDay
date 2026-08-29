@@ -400,11 +400,11 @@ class AppTheme {
       iconTheme: IconThemeData(color: scheme.onSurface, size: 22),
       dividerColor: scheme.outlineVariant,
 
-      // Shared, restrained page transition on every route push.
+      // Shared, restrained page transition on every route push. Android is the
+      // only shipping target, so one builder covers it.
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: _FadeThroughTransitionBuilder(),
-          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
         },
       ),
     );
