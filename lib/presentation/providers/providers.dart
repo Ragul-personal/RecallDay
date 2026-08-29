@@ -251,6 +251,60 @@ class TopicCommands {
     _backup();
   }
 
+  /// "I revised this today" — the Home checkbox.
+  ///
+  /// Records a normal `good` review, so the spaced-repetition ladder advances
+  /// and the topic comes back at the next interval. This is deliberately NOT
+  /// the same as [stopRepetition]: ticking a day off should not retire a topic.
+  ///
+  /// Returns the number of days until the topic is next due, so the caller can
+  /// tell the user when they'll see it again.
+  Future<int> markRevisedToday(String topicId) async {
+    final repo = ref.read(topicRepositoryProvider);
+    final t = repo.byId(topicId);
+    if (t == null) return 0;
+    final result = ref.read(engineProvider).schedule(t, ReviewRating.good);
+    await reviewTopic(topicId, ReviewRating.good);
+    return result.nextIntervalDays;
+  }
+
+  /// Retire a topic the user has mastered: no further reminders, ever.
+  ///
+  /// Distinct from pausing — pause is a temporary hold, this is "I know this
+  /// now". The topic stays visible inside its subject so the history isn't
+  /// lost, and [resumeRepetition] puts it back in rotation.
+  Future<void> stopRepetition(String topicId) async {
+    final repo = ref.read(topicRepositoryProvider);
+    final t = repo.byId(topicId);
+    if (t == null) return;
+    await repo.upsert(t.copyWith(status: TopicStatus.completed));
+    await NotificationService.instance.cancelForTopic(topicId);
+    _backup();
+  }
+
+  /// Put a stopped (or paused) topic back into the schedule, due today at its
+  /// reminder time.
+  Future<void> resumeRepetition(String topicId) async {
+    final repo = ref.read(topicRepositoryProvider);
+    final t = repo.byId(topicId);
+    if (t == null) return;
+    final now = DateTime.now();
+    var due = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      t.reminderHour,
+      t.reminderMinute,
+    );
+    if (!due.isAfter(now)) due = due.add(const Duration(days: 1));
+
+    final updated = t.copyWith(status: TopicStatus.active, nextDueAt: due);
+    await repo.upsert(updated);
+    await NotificationService.instance
+        .scheduleForTopic(updated, subjectName: _subjectName(updated.subjectId));
+    _backup();
+  }
+
   Future<void> snoozeTopic(String topicId, Duration by) async {
     final repo = ref.read(topicRepositoryProvider);
     final t = repo.byId(topicId);

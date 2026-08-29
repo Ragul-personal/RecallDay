@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -87,7 +88,7 @@ class TodayPage extends ConsumerWidget {
                   accent: cs.error,
                 ),
               ),
-              _TopicSliver(topics: overdue),
+              _TopicSliver(topics: overdue, completable: true),
             ],
 
             if (due.isNotEmpty) ...[
@@ -98,7 +99,7 @@ class TodayPage extends ConsumerWidget {
                   accent: cs.primary,
                 ),
               ),
-              _TopicSliver(topics: due),
+              _TopicSliver(topics: due, completable: true),
             ],
 
             if (upcoming.isNotEmpty) ...[
@@ -284,7 +285,12 @@ class _AllClearBanner extends StatelessWidget {
 
 class _TopicSliver extends ConsumerWidget {
   final List<Topic> topics;
-  const _TopicSliver({required this.topics});
+
+  /// Due and overdue rows get a tick control; "Coming up" rows don't, because
+  /// there's nothing to complete yet.
+  final bool completable;
+
+  const _TopicSliver({required this.topics, this.completable = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -313,11 +319,63 @@ class _TopicSliver extends ConsumerWidget {
                 accent: s?.color ?? cs.primary,
                 relativeLabel: DateLabels.relative(t.nextDueAt),
                 onTap: () => context.push('/topic/${t.id}'),
+                onComplete:
+                    completable ? () => _complete(context, ref, t) : null,
               ),
             ),
           ),
         );
       },
     );
+  }
+
+  Future<void> _complete(
+    BuildContext context,
+    WidgetRef ref,
+    Topic t,
+  ) async {
+    HapticFeedback.selectionClick();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Are you sure you completed this topic?'),
+        content: Text(
+          '“${t.title}” will be marked as revised and scheduled for its next '
+          'review automatically.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not yet'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, completed'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    HapticFeedback.lightImpact();
+    final days =
+        await ref.read(topicCommandsProvider).markRevisedToday(t.id);
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            days <= 1
+                ? 'Done · back tomorrow'
+                : 'Done · next review in $days days',
+          ),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () => context.push('/topic/${t.id}'),
+          ),
+        ),
+      );
   }
 }

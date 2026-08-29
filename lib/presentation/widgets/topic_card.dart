@@ -19,6 +19,11 @@ class TopicCard extends StatelessWidget {
   final String relativeLabel;
   final VoidCallback onTap;
 
+  /// Shows a tick control on the leading edge for marking today's revision
+  /// done. Only passed for topics that are actually due — a card for something
+  /// due next week has nothing to tick off yet.
+  final VoidCallback? onComplete;
+
   const TopicCard({
     super.key,
     required this.topic,
@@ -26,6 +31,7 @@ class TopicCard extends StatelessWidget {
     required this.accent,
     required this.relativeLabel,
     required this.onTap,
+    this.onComplete,
   });
 
   @override
@@ -39,6 +45,10 @@ class TopicCard extends StatelessWidget {
     final due = topic.isDue;
     final subjectColor = SubjectPalette.readable(accent, brightness);
     final paused = topic.status == TopicStatus.paused;
+    final mastered = topic.status == TopicStatus.completed;
+    final success = brightness == Brightness.light
+        ? StatusColors.successLight
+        : StatusColors.successDark;
 
     final Color dueColor = overdue
         ? cs.error
@@ -50,8 +60,8 @@ class TopicCard extends StatelessWidget {
 
     return AppCard(
       onTap: onTap,
-      accent: subjectColor,
-      muted: paused,
+      accent: mastered ? success : subjectColor,
+      muted: paused || mastered,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
         AppSpacing.md + 2,
@@ -60,6 +70,10 @@ class TopicCard extends StatelessWidget {
       ),
       child: Row(
         children: [
+          if (onComplete != null) ...[
+            _CompleteTick(color: subjectColor, onTap: onComplete!),
+            const SizedBox(width: AppSpacing.md),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,6 +99,10 @@ class TopicCard extends StatelessWidget {
                         color: cs.onSurfaceVariant,
                       ),
                     ],
+                    if (mastered) ...[
+                      const SizedBox(width: AppSpacing.sm),
+                      Icon(Icons.task_alt_rounded, size: 13, color: success),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -98,15 +116,23 @@ class TopicCard extends StatelessWidget {
                 Row(
                   children: [
                     Icon(
-                      Icons.schedule_rounded,
+                      mastered
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.schedule_rounded,
                       size: 12.5,
-                      color: dueColor,
+                      color: mastered ? success : dueColor,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      relativeLabel,
+                      // A mastered topic has no next due date to report, so
+                      // showing its stale one would be misleading.
+                      mastered
+                          ? 'Mastered'
+                          : paused
+                              ? 'Paused'
+                              : relativeLabel,
                       style: tt.labelSmall?.copyWith(
-                        color: dueColor,
+                        color: mastered ? success : dueColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -135,6 +161,52 @@ class TopicCard extends StatelessWidget {
             color: cs.onSurfaceVariant.withValues(alpha: 0.5),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The "revised it" tick.
+///
+/// Deliberately a large circular target (44px, the platform minimum) with its
+/// own ink response, so tapping it never opens the topic by accident.
+class _CompleteTick extends StatelessWidget {
+  final Color color;
+  final VoidCallback onTap;
+
+  const _CompleteTick({required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Mark as revised',
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Center(
+              child: Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color.withValues(alpha: 0.55), width: 2),
+                ),
+                child: Icon(
+                  Icons.check_rounded,
+                  size: 16,
+                  color: color.withValues(alpha: 0.75),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

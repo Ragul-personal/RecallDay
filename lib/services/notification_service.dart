@@ -6,6 +6,8 @@ import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
 
+import '../core/theme/app_theme.dart' show BrandColors;
+
 // Hide our domain `Priority` enum — `flutter_local_notifications` exports a
 // type with the same name and we use the latter here.
 import '../domain/entities/topic.dart' hide Priority;
@@ -84,18 +86,23 @@ class NotificationService {
       tz.setLocalLocation(tz.getLocation('UTC'));
     }
 
-    // `ic_stat_recall` is a transparent, monochrome silhouette. Android masks
-    // small icons to their alpha channel, so `ic_launcher` (an opaque filled
-    // square) renders as a solid white block in the status bar.
+    // `ic_stat_recallday` is the RecallDay brain/calendar mark as a transparent
+    // monochrome silhouette, generated from Logo.png. Android masks small icons
+    // to their alpha channel, so `ic_launcher` (an opaque filled square)
+    // renders as a solid white block in the status bar.
     //
-    // If that resource can't be resolved we fall back to `ic_launcher` rather
-    // than letting init throw. A missing drawable used to be fatal: the throw
-    // escaped main() before runApp(), so the whole app opened to a black
-    // screen just because a notification icon was absent. res/raw/keep.xml
-    // stops the release resource-shrinker stripping it in the first place;
-    // this is the second line of defence.
+    // If that resource can't be resolved we fall through to the older generic
+    // glyph and finally `ic_launcher`, rather than letting init throw. A
+    // missing drawable used to be fatal: the throw escaped main() before
+    // runApp(), so the whole app opened to a black screen just because a
+    // notification icon was absent. res/raw/keep.xml stops the release
+    // resource-shrinker stripping them; this is the second line of defence.
     var initialized = false;
-    for (final icon in const ['ic_stat_recall', 'ic_launcher']) {
+    for (final icon in const [
+      'ic_stat_recallday',
+      'ic_stat_recall',
+      'ic_launcher',
+    ]) {
       try {
         await _fln.initialize(
           InitializationSettings(android: AndroidInitializationSettings(icon)),
@@ -416,6 +423,13 @@ class NotificationService {
           enableVibration: true,
           enableLights: true,
           ticker: title,
+          // Full-colour logo on the right of the expanded notification, so a
+          // reminder is recognisably RecallDay and not just a grey glyph.
+          largeIcon: const DrawableResourceAndroidBitmap(
+            'ic_notification_logo',
+          ),
+          color: BrandColors.violet,
+          colorized: false,
           styleInformation: body == null
               ? null
               : BigTextStyleInformation(body, contentTitle: title),

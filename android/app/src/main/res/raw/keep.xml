@@ -15,4 +15,4 @@
   Dart string the shrinker can't see.
 -->
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/ic_stat_recall,@drawable/ic_launcher" />
+    tools:keep="@drawable/ic_stat_recallday,@drawable/ic_notification_logo,@drawable/ic_stat_recall,@drawable/ic_launcher" />

@@ -248,7 +248,9 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage> {
             const SizedBox(height: AppSpacing.xxl),
             FadeSlideIn(
               index: 2,
-              child: _ReviewPanel(topic: topic),
+              child: topic.status == TopicStatus.completed
+                  ? _MasteredPanel(topic: topic)
+                  : _ReviewPanel(topic: topic),
             ),
           ],
         ),
@@ -323,6 +325,62 @@ class _ReviewPanel extends ConsumerWidget {
             ],
           ],
         ),
+
+        const SizedBox(height: AppSpacing.xxl),
+        Divider(color: Theme.of(context).colorScheme.outlineVariant),
+        const SizedBox(height: AppSpacing.lg),
+
+        // The "I know this now" exit. One clear, full-width control rather
+        // than an option buried in the overflow menu, because deciding you've
+        // mastered something is a deliberate, first-class action.
+        Text('Confident with this topic?', style: tt.titleMedium),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          'Stop the spaced repetition and no further reminders will be sent. '
+          'You can restart it any time.',
+          style: tt.labelSmall?.copyWith(height: 1.5),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 52),
+            foregroundColor: Theme.of(context).colorScheme.primary,
+          ),
+          icon: const Icon(Icons.task_alt_rounded, size: 20),
+          label: const Text('Stop repetition — I know this'),
+          onPressed: () async {
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Stop reminders for this topic?'),
+                content: Text(
+                  '“${topic.title}” will be marked as mastered and RecallDay '
+                  'will stop reminding you about it. It stays in your subject, '
+                  'and you can restart repetition whenever you like.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Stop reminders'),
+                  ),
+                ],
+              ),
+            );
+            if (ok != true) return;
+            HapticFeedback.mediumImpact();
+            await ref.read(topicCommandsProvider).stopRepetition(topic.id);
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                const SnackBar(content: Text('Mastered · reminders stopped')),
+              );
+          },
+        ),
       ],
     );
   }
@@ -333,6 +391,75 @@ class _ReviewPanel extends ConsumerWidget {
     if (days < 30) return '$days days';
     if (days < 365) return '${(days / 30).round()} mo';
     return '${(days / 365).round()} yr';
+  }
+}
+
+/// Shown in place of the rating buttons once a topic has been mastered, so the
+/// state is obvious and reversible rather than the screen just looking empty.
+class _MasteredPanel extends ConsumerWidget {
+  final Topic topic;
+  const _MasteredPanel({required this.topic});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final tt = theme.textTheme;
+    final success = theme.brightness == Brightness.light
+        ? StatusColors.successLight
+        : StatusColors.successDark;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          decoration: BoxDecoration(
+            color: success.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.task_alt_rounded, color: success, size: 20),
+                  const SizedBox(width: AppSpacing.md),
+                  Text(
+                    'Mastered',
+                    style: tt.titleMedium?.copyWith(color: success),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Repetition is stopped, so no reminders will be sent for this '
+                'topic. Your review history is kept.',
+                style: tt.labelSmall?.copyWith(height: 1.5),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 52),
+          ),
+          icon: const Icon(Icons.refresh_rounded, size: 20),
+          label: const Text('Start repetition again'),
+          onPressed: () async {
+            HapticFeedback.lightImpact();
+            await ref.read(topicCommandsProvider).resumeRepetition(topic.id);
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                const SnackBar(content: Text('Back in your schedule')),
+              );
+          },
+        ),
+      ],
+    );
   }
 }
 
