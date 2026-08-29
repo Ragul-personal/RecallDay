@@ -23,9 +23,6 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.recallday.app"
-    // compileSdk 36 needs AGP 8.7+; we're on 8.6, so 35 is the ceiling.
-    // shared_preferences_android (the only plugin wanting 36) was removed
-    // when we stripped Firebase, so 35 is sufficient.
     compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
