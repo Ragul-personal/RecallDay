@@ -198,12 +198,19 @@ class BackupService {
       }
     }
 
+    // encode() is nullable in archive 3.x — it returns null if the archive
+    // can't be written out at all.
+    final bytes = ZipEncoder().encode(archive);
+    if (bytes == null) {
+      throw const FormatException('The backup archive could not be built.');
+    }
+
     // Written to the cache directory: the share sheet copies it wherever the
     // user chooses, so this copy is disposable.
     final tmp = await getTemporaryDirectory();
     final stamp = DateTime.now().toIso8601String().substring(0, 10);
     final out = File('${tmp.path}/recallday-backup-$stamp.zip');
-    await out.writeAsBytes(ZipEncoder().encode(archive), flush: true);
+    await out.writeAsBytes(bytes, flush: true);
     return out;
   }
 
