@@ -7,6 +7,7 @@ import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/storage_service.dart';
 import '../providers/providers.dart';
+import '../widgets/app_logo.dart';
 
 class SplashPage extends ConsumerStatefulWidget {
   const SplashPage({super.key});
@@ -100,25 +101,24 @@ class _SplashPageState extends ConsumerState<SplashPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 84, height: 84,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [
-                  cs.primary.withValues(alpha: 0.95),
-                  cs.primary.withValues(alpha: 0.55),
-                ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                borderRadius: BorderRadius.circular(22),
+            // The artwork already carries the wordmark and tagline, so there's
+            // no separate "RecallDay" text here — that would just duplicate it.
+            const AppLogo(size: 200),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: cs.primary.withValues(alpha: 0.7),
               ),
-              child: const Icon(Icons.replay_circle_filled_rounded,
-                  color: Colors.white, size: 44),
             ),
-            const SizedBox(height: 18),
-            const Text('RecallDay',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            Text(_status ?? 'Quiet, persistent revisions',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: cs.onSurface.withValues(alpha: 0.6))),
+            const SizedBox(height: 16),
+            Text(
+              _status ?? 'Remember today. Master tomorrow.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: cs.onSurface.withValues(alpha: 0.6)),
+            ),
           ],
         ),
       ),

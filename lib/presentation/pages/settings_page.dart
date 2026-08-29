@@ -7,6 +7,7 @@ import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/storage_service.dart';
 import '../providers/providers.dart';
+import '../widgets/app_logo.dart';
 import '../widgets/delete_confirm.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -315,10 +316,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   List<Widget> _aboutSection() {
     return [
       _Section(title: 'About', children: const [
+        Padding(
+          padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
+          child: Center(child: AppLogo(size: 132, elevated: false)),
+        ),
         ListTile(
           leading: Icon(Icons.info_outline),
           title: Text('RecallDay'),
-          subtitle: Text('v1.0.0 · local-only build'),
+          subtitle: Text('Remember today. Master tomorrow.'),
         ),
         ListTile(
           leading: Icon(Icons.shield_outlined),

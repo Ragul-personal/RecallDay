@@ -9,8 +9,10 @@
   during init. In a release build that surfaced as a black screen on launch,
   because the throw happened before runApp().
 
-  ic_launcher doesn't need listing here (the manifest's android:icon references
-  it), but it's included as the documented fallback icon.
+  @drawable/ic_launcher now MUST be listed. The launcher icon moved to
+  @mipmap/ic_launcher (the logo artwork), so the old vector drawable is
+  referenced from nowhere but NotificationService's fallback path — another
+  Dart string the shrinker can't see.
 -->
 <resources xmlns:tools="http://schemas.android.com/tools"
     tools:keep="@drawable/ic_stat_recall,@drawable/ic_launcher" />

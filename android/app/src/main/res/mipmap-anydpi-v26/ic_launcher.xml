@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon (Android 8.0+). The launcher masks these two layers
+  into whatever shape the device theme uses — circle, squircle, rounded square.
+
+  The background is a flat colour matching the logo artwork's own background
+  (#FDFFFE), and the foreground PNG carries the brain/calendar mark on that
+  same colour, so the two layers meet with no visible seam.
+
+  The mark is sized to sit inside the central 66% safe zone, which is all the
+  launcher guarantees will stay visible after masking.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <!-- No <monochrome> layer: Android 13 themed icons derive their shape from
+         the layer's ALPHA channel, and this foreground is fully opaque, so it
+         would render as a solid filled blob. That needs a dedicated
+         transparent silhouette, which the source artwork doesn't provide. -->
+</adaptive-icon>
