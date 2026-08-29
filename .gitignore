@@ -1,0 +1,39 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Android
+android/.gradle/
+android/captures/
+android/local.properties
+android/key.properties
+android/*.jks
+android/*.keystore
+android/app/google-services.json
+
+# iOS / macOS
+**/.DS_Store
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/App.framework
+
+# Firebase
+lib/firebase_options.dart
+.firebase/
+
+# Build artifacts
+*.apk
+*.aab
+android/.kotlin/

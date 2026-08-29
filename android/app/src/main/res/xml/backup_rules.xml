@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android Auto Backup rules (API 23–30; API 31+ uses data_extraction_rules.xml).
+
+  IMPORTANT — exclude-only, on purpose.
+  With `allowBackup="true"` and no <include> rules, Auto Backup covers the whole
+  app data directory by default. The moment you add a single <include>, it
+  switches to an allow-list and backs up ONLY what you listed.
+
+  That matters here because Hive does NOT live in the "file" domain. On Android,
+  path_provider's getApplicationDocumentsDirectory() (which Hive.initFlutter()
+  uses) resolves to /data/data/<pkg>/app_flutter — a sibling of files/, reachable
+  as domain="root" path="app_flutter". An `<include domain="file" path="."/>`
+  would therefore have excluded every box we were trying to protect.
+
+  So: include nothing, and only drop what we don't want.
+
+  The .lock files are transient cross-isolate locks; restoring a stale one is
+  pointless, so they're skipped.
+-->
+<full-backup-content>
+    <exclude domain="root" path="cache" />
+    <exclude domain="root" path="code_cache" />
+    <exclude domain="root" path="app_flutter/subjects.lock" />
+    <exclude domain="root" path="app_flutter/topics.lock" />
+    <exclude domain="root" path="app_flutter/reviews.lock" />
+    <exclude domain="root" path="app_flutter/prefs.lock" />
+</full-backup-content>

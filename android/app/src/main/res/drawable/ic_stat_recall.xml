@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification small icon.
+
+  Android masks status-bar icons down to their ALPHA channel and tints the
+  result, so the artwork must be a transparent silhouette. The launcher icon
+  (ic_launcher.xml) fills its whole 108x108 canvas with an opaque rect, which
+  is why using it here rendered as a solid white square.
+
+  Motif: a circular "replay" arrow — the spaced-repetition loop.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+
+    <!-- Arc: open circle broken at the top-right for the arrowhead. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,4.5c-4.14,0 -7.5,3.36 -7.5,7.5s3.36,7.5 7.5,7.5c3.32,0 6.14,-2.16 7.13,-5.15l-2.05,-0.68c-0.71,2.13 -2.72,3.67 -5.08,3.67 -2.96,0 -5.36,-2.4 -5.36,-5.36S9.04,6.62 12,6.62c1.48,0 2.82,0.6 3.79,1.57l-2.72,2.72h6.43V4.48l-2.2,2.2C15.98,5.33 14.09,4.5 12,4.5z" />
+</vector>

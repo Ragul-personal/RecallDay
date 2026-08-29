@@ -1,0 +1,54 @@
+name: Build APK
+
+# Builds a release APK on every push to main and lets you trigger it by hand.
+# The finished APKs are attached to a rolling GitHub Release tagged "latest" —
+# that gives a plain https download link anyone can open, no GitHub account
+# needed, so it's shareable with friends directly.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # needed to create/update the "latest" release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.27.0' # matches the floor in pubspec.yaml
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+        continue-on-error: true # don't block the APK build on lint warnings
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build release APK (per-ABI split)
+        run: flutter build apk --release --split-per-abi
+
+      - name: Publish to "latest" release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: latest
+          name: RecallDay (latest build)
+          body: |
+            Automatically built from commit ${{ github.sha }}.
+            Install `app-arm64-v8a-release.apk` on most modern phones.
+          allowUpdates: true
+          removeArtifacts: true
+          artifacts: >
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk,
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk,
+            build/app/outputs/flutter-apk/app-x86_64-release.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
