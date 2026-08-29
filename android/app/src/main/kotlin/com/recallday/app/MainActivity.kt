@@ -57,6 +57,19 @@ class MainActivity : FlutterActivity() {
                 "readFile" -> result.success(
                     readFile(call.argument<String>("uri"), call.argument<String>("name"))
                 )
+                "hasFile" -> result.success(
+                    hasFile(call.argument<String>("uri"), call.argument<String>("name"))
+                )
+                "deleteFile" -> result.success(
+                    deleteFile(call.argument<String>("uri"), call.argument<String>("name"))
+                )
+                "renameFile" -> result.success(
+                    renameFile(
+                        call.argument<String>("uri"),
+                        call.argument<String>("name"),
+                        call.argument<String>("newName"),
+                    )
+                )
                 "release" -> result.success(release(call.argument<String>("uri")))
                 else -> result.notImplemented()
             }
@@ -172,6 +185,31 @@ class MainActivity : FlutterActivity() {
             out.flush()
         }
         return target.uri.toString()
+    }
+
+    private fun hasFile(uriString: String?, name: String?): Boolean {
+        if (uriString.isNullOrEmpty() || name.isNullOrEmpty()) return false
+        val tree = DocumentFile.fromTreeUri(this, Uri.parse(uriString)) ?: return false
+        return tree.findFile(name)?.exists() == true
+    }
+
+    private fun deleteFile(uriString: String?, name: String?): Boolean {
+        if (uriString.isNullOrEmpty() || name.isNullOrEmpty()) return false
+        val tree = DocumentFile.fromTreeUri(this, Uri.parse(uriString)) ?: return false
+        return tree.findFile(name)?.delete() ?: false
+    }
+
+    /**
+     * Rename [name] to [newName]. Used to move an existing backup aside rather
+     * than writing over it — the user's own file is never destroyed.
+     */
+    private fun renameFile(uriString: String?, name: String?, newName: String?): Boolean {
+        if (uriString.isNullOrEmpty() || name.isNullOrEmpty() || newName.isNullOrEmpty()) {
+            return false
+        }
+        val tree = DocumentFile.fromTreeUri(this, Uri.parse(uriString)) ?: return false
+        val file = tree.findFile(name) ?: return false
+        return file.renameTo(newName)
     }
 
     private fun readFile(uriString: String?, name: String?): ByteArray? {

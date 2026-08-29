@@ -23,9 +23,11 @@ class TopicCard extends StatelessWidget {
   final String relativeLabel;
   final VoidCallback onTap;
 
-  /// Shows a "Revise" button on the row. Only passed for topics that are
-  /// actually due.
-  final VoidCallback? onRevise;
+  /// Shown only for topics that are actually due. Both must be supplied
+  /// together — offering one without the other is what made the old single
+  /// button ambiguous.
+  final VoidCallback? onDone;
+  final VoidCallback? onMissed;
 
   const TopicCard({
     super.key,
@@ -34,7 +36,8 @@ class TopicCard extends StatelessWidget {
     required this.accent,
     required this.relativeLabel,
     required this.onTap,
-    this.onRevise,
+    this.onDone,
+    this.onMissed,
   });
 
   @override
@@ -72,6 +75,8 @@ class TopicCard extends StatelessWidget {
             ? cs.onSurfaceVariant
             : dueColor;
 
+    final actionable = onDone != null && onMissed != null;
+
     return AppCard(
       onTap: onTap,
       accent: mastered ? success : subjectColor,
@@ -82,7 +87,10 @@ class TopicCard extends StatelessWidget {
         AppSpacing.md,
         AppSpacing.md + 2,
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
         children: [
           Expanded(
             child: Column(
@@ -139,15 +147,24 @@ class TopicCard extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          if (onRevise != null)
-            ReviseButton(onPressed: onRevise!)
-          else
-            Icon(
-              Icons.chevron_right_rounded,
-              size: 20,
-              color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+              const SizedBox(width: AppSpacing.sm),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
+            ],
+          ),
+          // Full-width row beneath the title rather than squeezed alongside
+          // it: two labelled buttons need room to stay legible on a narrow
+          // phone, and a cramped pair invites the wrong tap.
+          if (actionable) ...[
+            const SizedBox(height: AppSpacing.md),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ReviseActions(onDone: onDone!, onMissed: onMissed!),
             ),
+          ],
         ],
       ),
     );

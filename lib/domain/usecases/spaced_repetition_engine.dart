@@ -89,21 +89,27 @@ class SpacedRepetitionEngine {
   }
 
   /// First-time scheduling for a freshly created topic.
-  /// We schedule the FIRST reminder for "today at the user's reminder time"
-  /// if that's still in the future, otherwise tomorrow.
+  ///
+  /// The first revision lands one full ladder step after the day the topic was
+  /// created — `ladder.first`, normally tomorrow — not on the creation day.
+  ///
+  /// It used to schedule for *today* whenever the reminder hour hadn't passed
+  /// yet, which quietly made the creation day an extra revision day the ladder
+  /// never asked for: a topic added at 9am was due at 7pm the same evening,
+  /// then again the next day. You have just studied the material — that IS the
+  /// first exposure — so the first *revision* belongs on the next rung.
   ScheduleResult initialSchedule(Topic topic, {DateTime? now}) {
     final nowTs = now ?? DateTime.now();
-    var due = _anchorToReminderTime(
-      DateTime(nowTs.year, nowTs.month, nowTs.day),
+    final firstStep = ladder.isEmpty ? 1 : ladder.first;
+    final due = _anchorToReminderTime(
+      DateTime(nowTs.year, nowTs.month, nowTs.day)
+          .add(Duration(days: firstStep)),
       topic.reminderHour,
       topic.reminderMinute,
     );
-    if (!due.isAfter(nowTs)) {
-      due = due.add(const Duration(days: 1));
-    }
     return ScheduleResult(
       nextDueAt: due,
-      nextIntervalDays: 0,
+      nextIntervalDays: firstStep,
       nextLadderIndex: 0,
       nextRepetitions: 0,
       newEase: topic.ease,

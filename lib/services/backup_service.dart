@@ -193,6 +193,32 @@ class BackupService {
     return null;
   }
 
+  /// Move any backup already in the chosen folder aside before the app starts
+  /// writing its own.
+  ///
+  /// Adopting a folder must never cost the user the file they already had
+  /// there. Renaming keeps it — under a dated name — instead of letting the
+  /// first automatic save overwrite it.
+  Future<void> preserveExistingBackups() async {
+    final saf = SafService.instance;
+    if (!await saf.hasAccess()) return;
+
+    final now = DateTime.now();
+    final stamp = '${now.year}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}-'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}';
+
+    for (final name in const [_archiveFileName, _autoFileName]) {
+      if (!await saf.hasFile(name)) continue;
+      final dot = name.lastIndexOf('.');
+      final base = name.substring(0, dot);
+      final ext = name.substring(dot);
+      await saf.renameFile(name, '$base-previous-$stamp$ext');
+    }
+  }
+
   /// Whether the chosen folder holds anything restorable.
   Future<bool> folderHasBackup() async {
     final saf = SafService.instance;

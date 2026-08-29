@@ -2,25 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
 import '../providers/providers.dart';
 
-/// The one revision flow, shared by Home, Calendar and the topic page.
+/// The revision actions shared by Home, Calendar and the topic page.
 ///
-/// There is a single question and a single outcome, so the three entry points
-/// can't drift apart in wording or behaviour:
+/// Two outcomes, each with its own button on the card so neither is hidden
+/// behind a dialog:
 ///
-///   "Did you complete your revision in this topic?"
-///     Yes -> the review is recorded and the next one scheduled
-///     No  -> nothing changes; the topic stays due
+///   Done     -> the revision is recorded and the next one scheduled
+///   Not done -> the revision is rolled to tomorrow, progress untouched
 ///
-/// Answering yes moves the topic's next due date at least a day forward, so it
-/// drops off today's list — a topic is only ever revised once per due date.
+/// Either way the topic leaves today's list, so it can't be actioned twice for
+/// the same date.
 Future<bool> confirmRevision(BuildContext context, String title) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Did you complete your revision in this topic?'),
+      title: const Text('Completed this revision?'),
       content: Text(
         '“$title” will be marked as revised and its next review scheduled '
         'automatically.',
@@ -28,7 +28,7 @@ Future<bool> confirmRevision(BuildContext context, String title) async {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('No, not yet'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(ctx, true),
@@ -38,6 +38,52 @@ Future<bool> confirmRevision(BuildContext context, String title) async {
     ),
   );
   return ok ?? false;
+}
+
+/// Confirmation for the negative action.
+Future<bool> confirmMissed(BuildContext context, String title) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Didn’t complete this revision?'),
+      content: Text(
+        '“$title” will move to tomorrow. Nothing is recorded and your progress '
+        'on this topic stays exactly where it is.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Move to tomorrow'),
+        ),
+      ],
+    ),
+  );
+  return ok ?? false;
+}
+
+/// Ask, then roll the topic to tomorrow without recording a review.
+Future<void> markMissed(
+  BuildContext context,
+  WidgetRef ref,
+  String topicId,
+  String title,
+) async {
+  HapticFeedback.selectionClick();
+  final ok = await confirmMissed(context, title);
+  if (!ok || !context.mounted) return;
+
+  await ref.read(topicCommandsProvider).markNotRevised(topicId);
+  if (!context.mounted) return;
+
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      const SnackBar(content: Text('Moved to tomorrow · progress kept')),
+    );
 }
 
 /// Ask, then record. Reports back when the topic returns.
@@ -67,42 +113,87 @@ Future<void> reviseTopic(
     );
 }
 
-/// The compact "Revise" affordance shown on a due topic's card.
-class ReviseButton extends StatelessWidget {
-  final VoidCallback onPressed;
-  final bool compact;
+/// The pair of actions on a due topic's card.
+///
+/// Both outcomes are visible and distinct: a green tick for done, a muted
+/// amber cross for not done. A single button couldn't say which of the two it
+/// meant without the user opening a dialog to find out.
+class ReviseActions extends StatelessWidget {
+  final VoidCallback onDone;
+  final VoidCallback onMissed;
 
-  const ReviseButton({
+  const ReviseActions({
     super.key,
-    required this.onPressed,
-    this.compact = true,
+    required this.onDone,
+    required this.onMissed,
   });
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final light = theme.brightness == Brightness.light;
+    final success =
+        light ? StatusColors.successLight : StatusColors.successDark;
+    final warning =
+        light ? StatusColors.warningLight : StatusColors.warningDark;
 
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _Action(
+          icon: Icons.close_rounded,
+          label: 'Not done',
+          color: warning,
+          onTap: onMissed,
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        _Action(
+          icon: Icons.check_rounded,
+          label: 'Done',
+          color: success,
+          onTap: onDone,
+        ),
+      ],
+    );
+  }
+}
+
+class _Action extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _Action({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
     return Material(
-      color: cs.primary.withValues(alpha: 0.12),
+      color: color.withValues(alpha: 0.12),
       borderRadius: BorderRadius.circular(AppRadius.sm),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onPressed,
+        onTap: onTap,
         child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? AppSpacing.md : AppSpacing.lg,
-            vertical: compact ? AppSpacing.sm + 1 : AppSpacing.md,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm + 1,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.check_rounded, size: 15, color: cs.primary),
+              Icon(icon, size: 15, color: color),
               const SizedBox(width: 5),
               Text(
-                'Revise',
+                label,
                 style: tt.labelSmall?.copyWith(
-                  color: cs.primary,
+                  color: color,
                   fontWeight: FontWeight.w700,
                 ),
               ),

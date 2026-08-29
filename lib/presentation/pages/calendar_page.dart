@@ -250,15 +250,8 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                     subjectName: s?.name ?? 'No subject',
                     accent: s?.color ?? cs.primary,
                     onTap: () => context.push('/topic/${e.topic.id}'),
-                    // Same revise flow as Home, for anything due right now.
-                    onRevise: e.kind == _Kind.scheduled && e.topic.isDue
-                        ? () => reviseTopic(
-                              context,
-                              ref,
-                              e.topic.id,
-                              e.topic.title,
-                            )
-                        : null,
+                    // Same pair of actions as Home, for anything due now.
+                    actionable: e.kind == _Kind.scheduled && e.topic.isDue,
                   ),
                 );
               },
@@ -272,23 +265,23 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   }
 }
 
-class _EntryRow extends StatelessWidget {
+class _EntryRow extends ConsumerWidget {
   final _CalEntry entry;
   final String subjectName;
   final Color accent;
   final VoidCallback onTap;
-  final VoidCallback? onRevise;
+  final bool actionable;
 
   const _EntryRow({
     required this.entry,
     required this.subjectName,
     required this.accent,
     required this.onTap,
-    this.onRevise,
+    this.actionable = false,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
@@ -309,42 +302,64 @@ class _EntryRow extends StatelessWidget {
         AppSpacing.md,
         AppSpacing.md + 2,
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.topic.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: tt.titleSmall?.copyWith(
-                    color: projected ? cs.onSurfaceVariant : null,
-                  ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.topic.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: tt.titleSmall?.copyWith(
+                        color: projected ? cs.onSurfaceVariant : null,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$subjectName · ${DateLabels.time(entry.when)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: tt.labelSmall,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  '$subjectName · ${DateLabels.time(entry.when)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: tt.labelSmall,
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              switch (entry.kind) {
+                _Kind.reviewed =>
+                  AppPill('Reviewed', color: success, tonal: true),
+                _Kind.scheduled =>
+                  AppPill('Scheduled', color: cs.primary, tonal: true),
+                _Kind.projected =>
+                  AppPill('Forecast', color: cs.onSurfaceVariant),
+              },
+            ],
           ),
-          const SizedBox(width: AppSpacing.sm),
-          if (onRevise != null)
-            ReviseButton(onPressed: onRevise!)
-          else
-            switch (entry.kind) {
-              _Kind.reviewed =>
-                AppPill('Reviewed', color: success, tonal: true),
-              _Kind.scheduled =>
-                AppPill('Scheduled', color: cs.primary, tonal: true),
-              _Kind.projected =>
-                AppPill('Forecast', color: cs.onSurfaceVariant),
-            },
+          if (actionable) ...[
+            const SizedBox(height: AppSpacing.md),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ReviseActions(
+                onDone: () => reviseTopic(
+                  context,
+                  ref,
+                  entry.topic.id,
+                  entry.topic.title,
+                ),
+                onMissed: () => markMissed(
+                  context,
+                  ref,
+                  entry.topic.id,
+                  entry.topic.title,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

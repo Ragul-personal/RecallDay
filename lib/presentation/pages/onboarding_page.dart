@@ -15,11 +15,22 @@ import '../widgets/app_logo.dart';
 
 /// First-run setup.
 ///
-/// The one thing this has to get right is the backup folder. Without it,
-/// everything lives in app-private storage and an uninstall takes the lot —
-/// which is exactly the failure the user hit before. So folder selection is
-/// required to leave this screen, in both branches.
-enum _Step { welcome, newUser, existingFolder, existingImport }
+/// Order matters for existing users: the backup is imported FIRST, and only
+/// then is a folder nominated. The reverse order destroyed data. Picking the
+/// folder used to prove it was writable by writing the real backup file, and
+/// on a fresh install that meant writing an EMPTY database over the user's
+/// own backup sitting in that folder — before they ever reached the import
+/// step. By the time they selected their .zip, it held nothing.
+///
+/// Three rules now hold:
+///   • Writability is proved with a throwaway probe file, never a real one.
+///   • Nothing is written to the folder until the database is settled.
+///   • Adopting a folder that already contains a backup renames it aside
+///     rather than overwriting it.
+///
+/// The folder itself stays mandatory in both branches: without one everything
+/// lives in app-private storage and an uninstall takes the lot.
+enum _Step { welcome, newUser, existingImport, existingFolder }
 
 class OnboardingPage extends ConsumerStatefulWidget {
   const OnboardingPage({super.key});
@@ -57,24 +68,24 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
   /// Pick a folder and prove we can actually write to it.
   ///
-  /// Verified rather than assumed: some providers hand back a tree that looks
-  /// fine and then refuses writes, and finding that out here is far better
-  /// than discovering it the first time a backup silently fails.
+  /// The check writes a throwaway probe file and deletes it. It must not write
+  /// the real backup: on a fresh install that would put an empty database over
+  /// whatever the user already had in that folder.
   Future<void> _chooseFolder() async {
     final uri = await SafService.instance.pickFolder();
     if (uri == null || !mounted) return;
 
     setState(() => _busy = true);
-    final result = await BackupService.instance.flush();
+    final writable = await SafService.instance.verifyWritable();
     final name = await SafService.instance.folderName();
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _folderReady = result.mirroredToFolder;
+      _folderReady = writable;
       _folderName = name;
     });
 
-    if (!result.mirroredToFolder) {
+    if (!writable) {
       await _details(
         'That folder can’t be used',
         'RecallDay could not write to it. Please choose another — a folder on '
@@ -116,8 +127,15 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     await NotificationService.instance.requestPermissions();
 
     await StorageService.instance.markOnboarded();
+
+    // Anything already in the folder is renamed aside before the app writes
+    // its own files, so adopting a folder never costs the user the backup
+    // they had there — including the very .zip just imported from it.
+    await BackupService.instance.preserveExistingBackups();
+
     // Restored topics carry no OS alarms, and a new install has none either.
     await ref.read(topicCommandsProvider).reArmAllNotifications();
+    await BackupService.instance.flush();
     await BackupService.instance.mirrorArchiveToFolder();
     if (!mounted) return;
     context.go('/today');
@@ -174,7 +192,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 54),
             ),
-            onPressed: () => _go(_Step.existingFolder),
+            onPressed: () => _go(_Step.existingImport),
             child: const Text('I already use RecallDay'),
           ),
           const SizedBox(height: AppSpacing.lg),
@@ -223,36 +241,11 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
   // ---------------------------------------------------------- existing user
 
-  Widget _existingFolder() {
-    return _StepScaffold(
-      key: const ValueKey('existingFolder'),
-      icon: Icons.folder_special_outlined,
-      title: 'Choose where your data lives',
-      body: 'Pick the folder RecallDay should keep your data in from now on.\n\n'
-          'If your backup .zip is already sitting in a folder, choosing that '
-          'one keeps everything together — but this is only a suggestion. You '
-          'can pick any folder you like and still import your backup from '
-          'wherever it happens to be.',
-      onBack: () => _go(_Step.welcome),
-      children: [
-        _FolderTile(
-          ready: _folderReady,
-          name: _folderName,
-          busy: _busy,
-          onTap: _chooseFolder,
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        FilledButton(
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(double.infinity, 54),
-          ),
-          onPressed:
-              _folderReady && !_busy ? () => _go(_Step.existingImport) : null,
-          child: const Text('Next'),
-        ),
-      ],
-    );
-  }
+  // ---------------------------------------------------------- existing user
+  //
+  // Import first, folder second. Doing it the other way round meant the folder
+  // step wrote to the folder before any data existed, wiping the very backup
+  // the next step was about to read.
 
   Widget _existingImport() {
     final tt = Theme.of(context).textTheme;
@@ -264,10 +257,12 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     return _StepScaffold(
       key: const ValueKey('existingImport'),
       icon: Icons.file_open_outlined,
-      title: 'Bring your data back',
-      body: 'Select the RecallDay backup file you saved — a .zip containing '
-          'your subjects, topics and attachments.',
-      onBack: () => _go(_Step.existingFolder),
+      title: 'Select your backup file',
+      body: 'Choose the RecallDay backup you saved — a .zip holding your '
+          'subjects, topics and attachments.\n\n'
+          'It is only read, never changed. Your original file stays exactly '
+          'where it is.',
+      onBack: () => _go(_Step.welcome),
       children: [
         AppCard(
           onTap: _busy ? null : _importBackup,
@@ -284,12 +279,12 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      done ? 'Backup restored' : 'Select backup file',
+                      done ? 'Backup loaded' : 'Select backup file',
                       style: tt.titleSmall,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      done ? _restoredSummary! : 'Tap to choose your .zip',
+                      done ? _restoredSummary! : 'Required — tap to choose your .zip',
                       style: tt.labelSmall,
                     ),
                   ],
@@ -309,12 +304,13 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
           style: FilledButton.styleFrom(
             minimumSize: const Size(double.infinity, 54),
           ),
-          onPressed: done && !_busy ? _finish : null,
-          child: const Text('Continue'),
+          onPressed:
+              done && !_busy ? () => _go(_Step.existingFolder) : null,
+          child: const Text('Next'),
         ),
         const SizedBox(height: AppSpacing.lg),
-        // The escape hatch: someone who came down this path without a backup
-        // would otherwise be stuck on a button they can never enable.
+        // Without this, someone who came down this path with no backup would
+        // be stranded on a button that can never enable.
         TextButton(
           onPressed: _busy
               ? null
@@ -323,6 +319,37 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                   _go(_Step.newUser);
                 },
           child: const Text('I don’t have my backup — start fresh'),
+        ),
+      ],
+    );
+  }
+
+  Widget _existingFolder() {
+    return _StepScaffold(
+      key: const ValueKey('existingFolder'),
+      icon: Icons.folder_special_outlined,
+      title: 'Where should your data live?',
+      body: 'Pick the folder RecallDay will keep your data in from now on, '
+          'updating it as you go.\n\n'
+          'It does not have to be the folder your backup came from — that is '
+          'only a convenient option if you want everything in one place. Any '
+          'folder works, and the backup you just imported is left untouched '
+          'either way.',
+      onBack: () => _go(_Step.existingImport),
+      children: [
+        _FolderTile(
+          ready: _folderReady,
+          name: _folderName,
+          busy: _busy,
+          onTap: _chooseFolder,
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(double.infinity, 54),
+          ),
+          onPressed: _folderReady && !_busy ? _finish : null,
+          child: const Text('Start using RecallDay'),
         ),
       ],
     );

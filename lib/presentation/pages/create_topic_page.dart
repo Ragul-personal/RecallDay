@@ -311,7 +311,7 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
               const SizedBox(height: AppSpacing.md),
               Center(
                 child: Text(
-                  'First reminder today at ${_reminder.format(context)}',
+                  'First revision tomorrow at ${_reminder.format(context)}',
                   style: tt.labelSmall,
                 ),
               ),

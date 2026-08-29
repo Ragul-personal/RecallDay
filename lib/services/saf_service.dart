@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -124,6 +125,67 @@ class SafService {
       debugPrint('[saf] read "$name" failed: $e');
       return null;
     }
+  }
+
+  /// Whether [name] exists in the chosen folder.
+  Future<bool> hasFile(String name) async {
+    final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('hasFile', {'uri': uri, 'name': name}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> deleteFile(String name) async {
+    final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('deleteFile', {'uri': uri, 'name': name}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Rename a file inside the chosen folder.
+  ///
+  /// Used to move an existing backup aside instead of writing over it, so a
+  /// user's own file is never destroyed by the app adopting their folder.
+  Future<bool> renameFile(String name, String newName) async {
+    final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel.invokeMethod<bool>('renameFile', {
+            'uri': uri,
+            'name': name,
+            'newName': newName,
+          }) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Confirm the folder really accepts writes, without touching any real file.
+  ///
+  /// Setup used to prove this by writing the actual backup, which on a fresh
+  /// install meant writing an EMPTY database over whatever was already there —
+  /// destroying the user's backup before they had a chance to import it. A
+  /// throwaway probe answers the same question and harms nothing.
+  Future<bool> verifyWritable() async {
+    const probe = 'recallday-write-test.txt';
+    final ok = await writeFile(
+      probe,
+      Uint8List.fromList(utf8.encode('ok')),
+      mime: 'text/plain',
+    );
+    if (ok) await deleteFile(probe);
+    return ok;
   }
 
   /// Forget the folder and hand the grant back to Android.

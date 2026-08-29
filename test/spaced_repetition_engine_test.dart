@@ -125,18 +125,23 @@ void main() {
   group('initialSchedule', () {
     const engine = SpacedRepetitionEngine();
 
-    test('schedules today if reminder time is still in the future', () {
+    // The creation day is the first exposure to the material, not a revision.
+    // The first revision is therefore one ladder step later, whatever time of
+    // day the topic happened to be added.
+    test('first revision is one ladder step after the creation day', () {
       final now = DateTime(2024, 6, 1, 9, 0);
       final t = _seed().copyWith(reminderHour: 19, reminderMinute: 0);
       final r = engine.initialSchedule(t, now: now);
-      expect(r.nextDueAt, DateTime(2024, 6, 1, 19, 0));
+      expect(r.nextDueAt, DateTime(2024, 6, 2, 19, 0));
+      expect(r.nextIntervalDays, SpacedRepetitionEngine.defaultLadder.first);
     });
 
-    test('schedules tomorrow if reminder time has already passed', () {
-      final now = DateTime(2024, 6, 1, 21, 0);
+    test('time of day the topic was created makes no difference', () {
       final t = _seed().copyWith(reminderHour: 19, reminderMinute: 0);
-      final r = engine.initialSchedule(t, now: now);
-      expect(r.nextDueAt, DateTime(2024, 6, 2, 19, 0));
+      final early = engine.initialSchedule(t, now: DateTime(2024, 6, 1, 9, 0));
+      final late = engine.initialSchedule(t, now: DateTime(2024, 6, 1, 21, 0));
+      expect(early.nextDueAt, late.nextDueAt);
+      expect(late.nextDueAt, DateTime(2024, 6, 2, 19, 0));
     });
   });
 }

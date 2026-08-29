@@ -321,6 +321,36 @@ class TopicCommands {
     return result.nextIntervalDays;
   }
 
+  /// "I didn't get to this."
+  ///
+  /// Rolls the topic to tomorrow at its reminder time and records nothing. The
+  /// ladder position, ease and repetition count are all left alone: not having
+  /// found time is a scheduling fact, not evidence that the memory decayed, so
+  /// it would be wrong to penalise progress for it. A missed day simply moves.
+  Future<int> markNotRevised(String topicId) async {
+    final repo = ref.read(topicRepositoryProvider);
+    final t = repo.byId(topicId);
+    if (t == null) return 0;
+
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day)
+        .add(const Duration(days: 1));
+    final due = DateTime(
+      tomorrow.year,
+      tomorrow.month,
+      tomorrow.day,
+      t.reminderHour,
+      t.reminderMinute,
+    );
+
+    final updated = t.copyWith(nextDueAt: due);
+    await repo.upsert(updated);
+    await NotificationService.instance
+        .scheduleForTopic(updated, subjectName: _subjectName(updated.subjectId));
+    _backup();
+    return 1;
+  }
+
   /// Retire a topic the user has mastered: no further reminders, ever.
   ///
   /// Distinct from pausing — pause is a temporary hold, this is "I know this

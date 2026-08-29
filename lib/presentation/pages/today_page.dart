@@ -264,8 +264,11 @@ class _TopicSliver extends ConsumerWidget {
                 accent: s?.color ?? cs.primary,
                 relativeLabel: DateLabels.relative(t.nextDueAt),
                 onTap: () => context.push('/topic/${t.id}'),
-                onRevise: completable
+                onDone: completable
                     ? () => reviseTopic(context, ref, t.id, t.title)
+                    : null,
+                onMissed: completable
+                    ? () => markMissed(context, ref, t.id, t.title)
                     : null,
               ),
             ),
