@@ -5,7 +5,10 @@ version: 1.0.0+1
 
 environment:
   sdk: '>=3.6.0 <4.0.0'
-  flutter: ">=3.27.0"
+  # workmanager 0.9.x requires Flutter >=3.32.0 — the floor used to say
+  # 3.27.0, which made `flutter pub get` fail version solving on CI runners
+  # pinned to that version.
+  flutter: ">=3.32.0"
 
 dependencies:
   flutter:

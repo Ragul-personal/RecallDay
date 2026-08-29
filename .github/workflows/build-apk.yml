@@ -21,7 +21,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: '3.27.0' # matches the floor in pubspec.yaml
+          # pubspec.yaml's floor (3.27.0) is lower than what's actually
+          # resolvable: workmanager 0.9.x needs Flutter >=3.32.0. Using
+          # "stable" with no pinned version tracks whatever's current.
           cache: true
 
       - name: Install dependencies
