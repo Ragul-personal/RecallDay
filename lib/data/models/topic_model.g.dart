@@ -33,13 +33,16 @@ class TopicModelAdapter extends TypeAdapter<TopicModel> {
       reminderHour: (fields[16] as int?) ?? 19,
       reminderMinute: (fields[17] as int?) ?? 0,
       persistentReminders: (fields[18] as bool?) ?? true,
+      // Field 19 is absent in boxes written by earlier builds, so a null
+      // here is the normal case for existing topics, not an error.
+      attachments: (fields[19] as List?)?.cast<String>() ?? const [],
     );
   }
 
   @override
   void write(BinaryWriter writer, TopicModel obj) {
     writer
-      ..writeByte(19)
+      ..writeByte(20)
       ..writeByte(0)..write(obj.id)
       ..writeByte(1)..write(obj.subjectId)
       ..writeByte(2)..write(obj.title)
@@ -58,7 +61,8 @@ class TopicModelAdapter extends TypeAdapter<TopicModel> {
       ..writeByte(15)..write(obj.statusIndex)
       ..writeByte(16)..write(obj.reminderHour)
       ..writeByte(17)..write(obj.reminderMinute)
-      ..writeByte(18)..write(obj.persistentReminders);
+      ..writeByte(18)..write(obj.persistentReminders)
+      ..writeByte(19)..write(obj.attachments);
   }
 
   @override

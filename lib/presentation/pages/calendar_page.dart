@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../../core/constants/subject_palette.dart';
@@ -10,8 +11,8 @@ import '../../domain/entities/topic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/motion.dart';
+import '../widgets/revise_action.dart';
 import '../widgets/tab_app_bar.dart';
-import '../widgets/topic_sheet.dart';
 
 /// What a calendar row represents.
 enum _Kind {
@@ -248,7 +249,16 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                     entry: e,
                     subjectName: s?.name ?? 'No subject',
                     accent: s?.color ?? cs.primary,
-                    onTap: () => showTopicSheet(context, ref, e.topic.id),
+                    onTap: () => context.push('/topic/${e.topic.id}'),
+                    // Same revise flow as Home, for anything due right now.
+                    onRevise: e.kind == _Kind.scheduled && e.topic.isDue
+                        ? () => reviseTopic(
+                              context,
+                              ref,
+                              e.topic.id,
+                              e.topic.title,
+                            )
+                        : null,
                   ),
                 );
               },
@@ -267,12 +277,14 @@ class _EntryRow extends StatelessWidget {
   final String subjectName;
   final Color accent;
   final VoidCallback onTap;
+  final VoidCallback? onRevise;
 
   const _EntryRow({
     required this.entry,
     required this.subjectName,
     required this.accent,
     required this.onTap,
+    this.onRevise,
   });
 
   @override
@@ -322,14 +334,17 @@ class _EntryRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          switch (entry.kind) {
-            _Kind.reviewed =>
-              AppPill('Reviewed', color: success, tonal: true),
-            _Kind.scheduled =>
-              AppPill('Scheduled', color: cs.primary, tonal: true),
-            _Kind.projected =>
-              AppPill('Forecast', color: cs.onSurfaceVariant),
-          },
+          if (onRevise != null)
+            ReviseButton(onPressed: onRevise!)
+          else
+            switch (entry.kind) {
+              _Kind.reviewed =>
+                AppPill('Reviewed', color: success, tonal: true),
+              _Kind.scheduled =>
+                AppPill('Scheduled', color: cs.primary, tonal: true),
+              _Kind.projected =>
+                AppPill('Forecast', color: cs.onSurfaceVariant),
+            },
         ],
       ),
     );

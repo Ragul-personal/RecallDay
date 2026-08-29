@@ -49,20 +49,9 @@ class StatusColors {
   static const Color infoLight = Color(0xFF2D5BC7);
   static const Color infoDark = Color(0xFF8AB0FF);
 
-  /// Review-rating ramp: forgot → hard → good → easy.
-  static List<Color> ratings(Brightness b) => b == Brightness.light
-      ? const [
-          Color(0xFFC42B3E),
-          Color(0xFFB25A16),
-          Color(0xFF12805C),
-          Color(0xFF6038D8),
-        ]
-      : const [
-          Color(0xFFFF8A93),
-          Color(0xFFE8A366),
-          Color(0xFF5FD3AB),
-          Color(0xFF9E85FF),
-        ];
+  // The four-colour rating ramp lived here for the Forgot/Hard/Good/Easy
+  // buttons. Those were replaced by a single "Revised" action, so the ramp
+  // has no remaining caller.
 }
 
 /// Light-first Material 3 theme, with a matching dark variant.

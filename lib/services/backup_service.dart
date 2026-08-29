@@ -49,6 +49,8 @@ class BackupService {
   static final BackupService instance = BackupService._();
 
   static const String _fileName = 'recallday-backup.json';
+  /// Keeps a .json extension — see the note in [_writeTo].
+  static const String _tempName = 'recallday-backup.writing.json';
   static const String _folderName = 'RecallDay';
   static const int _schemaVersion = 1;
 
@@ -84,51 +86,74 @@ class BackupService {
 
   // ------------------------------------------------------------------ write
 
-  /// Write the current database to the backup file.
+  /// Write the snapshot, trying each candidate location in turn.
   ///
   /// Never throws: returns a [BackupResult] describing what happened so the
   /// caller can show it. Auto-backup calls this on a debounce, so a failure
   /// here must not disturb the mutation that triggered it.
+  ///
+  /// This *actually writes* rather than probing first and trusting the result.
+  /// A probe is a poor proxy for the real thing: creating a directory and
+  /// touching a dot-file under `/storage/emulated/0/Documents` can succeed on
+  /// Android while the real write still fails with EACCES, which is exactly
+  /// the "Permission denied, errno = 13" users hit. Now a location that fails
+  /// is simply skipped and the next one is tried, ending at app-private
+  /// storage — which always works, so a backup effectively cannot fail.
   Future<BackupResult> writeBackup() async {
-    try {
-      final location = await resolveLocation();
-      if (location == null) {
-        // Report what was actually tried and why each one failed, rather than
-        // a bare "backup failed" the user can't act on.
-        return BackupResult.failure(
-          'No writable storage location was available.\n\n'
-          'Tried:\n${_lastProbeLog.join('\n')}',
+    final snapshot = buildSnapshot();
+    final json = const JsonEncoder.withIndent('  ').convert(snapshot);
+    final attempts = <String>[];
+
+    for (final location in await _candidateLocations()) {
+      final err = await _writeTo(location, json);
+      if (err == null) {
+        _cachedLocation = location;
+        return BackupResult.success(
+          path: '${location.path}/$_fileName',
+          location: location,
+          subjects: (snapshot['subjects'] as List).length,
+          topics: (snapshot['topics'] as List).length,
+          reviews: (snapshot['reviews'] as List).length,
         );
       }
+      attempts.add('• ${location.path}\n    $err');
+      debugPrint('[backup] ${location.path} failed: $err');
+    }
 
+    return BackupResult.failure(
+      'Could not write to any storage location.\n\n${attempts.join('\n')}',
+    );
+  }
+
+  /// Returns null on success, else a short reason.
+  Future<String?> _writeTo(BackupLocation location, String json) async {
+    try {
       final dir = Directory(location.path);
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
 
-      final snapshot = buildSnapshot();
-      final json = const JsonEncoder.withIndent('  ').convert(snapshot);
-
-      // Write to a temp file then rename, so an interrupted write can't leave
-      // a truncated backup where a good one used to be.
       final target = File('${location.path}/$_fileName');
-      final temp = File('${location.path}/$_fileName.tmp');
+
+      // Write to a sibling temp file then rename, so an interrupted write
+      // can't leave a truncated backup where a good one used to be.
+      //
+      // The temp name keeps the .json extension on purpose. Android's scoped
+      // storage rejects files whose extension maps to no permitted MIME type
+      // in a shared collection, so the previous `recallday-backup.json.tmp`
+      // was refused outright on exactly the directory we most want to use.
+      final temp = File('${location.path}/$_tempName');
       await temp.writeAsString(json, flush: true);
       if (await target.exists()) {
         await target.delete();
       }
       await temp.rename(target.path);
-
-      return BackupResult.success(
-        path: target.path,
-        location: location,
-        subjects: (snapshot['subjects'] as List).length,
-        topics: (snapshot['topics'] as List).length,
-        reviews: (snapshot['reviews'] as List).length,
-      );
-    } catch (e, st) {
-      debugPrint('[backup] write failed: $e\n$st');
-      return BackupResult.failure('$e');
+      return null;
+    } on FileSystemException catch (e) {
+      // The OS message ("Permission denied") is the useful part.
+      return e.osError?.message ?? e.message;
+    } catch (e) {
+      return '$e';
     }
   }
 
@@ -290,7 +315,12 @@ class BackupService {
   /// Human-readable log of the last probe, surfaced when nothing was writable.
   final List<String> _lastProbeLog = [];
 
-  /// The directory we will actually write to, probing for write access.
+  /// Where backups are being written, for display in Settings.
+  ///
+  /// [writeBackup] no longer depends on this — it just tries each location for
+  /// real. This still probes, so Settings can say up front whether the durable
+  /// location is reachable, but a wrong answer here can no longer break a
+  /// backup.
   Future<BackupLocation?> resolveLocation({bool refresh = false}) async {
     if (!refresh && _cachedLocation != null) return _cachedLocation;
     _lastProbeLog.clear();

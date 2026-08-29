@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -13,8 +12,8 @@ import '../widgets/app_card.dart';
 import '../widgets/delete_confirm.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/motion.dart';
+import '../widgets/revise_action.dart';
 import '../widgets/tab_app_bar.dart';
-import '../widgets/topic_sheet.dart';
 import '../widgets/topic_card.dart';
 
 class TodayPage extends ConsumerWidget {
@@ -27,7 +26,6 @@ class TodayPage extends ConsumerWidget {
 
     final due = ref.watch(dueTodayProvider);
     final overdue = ref.watch(overdueProvider);
-    final upcoming = ref.watch(upcomingProvider);
     final streak = ref.watch(streakDaysProvider);
     final doneToday = ref.watch(reviewedTodayCountProvider);
 
@@ -103,14 +101,7 @@ class TodayPage extends ConsumerWidget {
               _TopicSliver(topics: due, completable: true),
             ],
 
-            if (upcoming.isNotEmpty) ...[
-              const SliverToBoxAdapter(
-                child: SectionHeader(title: 'Coming up'),
-              ),
-              _TopicSliver(topics: upcoming.take(15).toList()),
-            ],
-
-            if (overdue.isEmpty && due.isEmpty && upcoming.isEmpty)
+            if (overdue.isEmpty && due.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: EmptyState(
@@ -124,16 +115,6 @@ class TodayPage extends ConsumerWidget {
                     icon: const Icon(Icons.add_rounded, size: 20),
                     label: const Text('Add a topic'),
                   ),
-                ),
-              )
-            else if (overdue.isEmpty && due.isEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.gutter,
-                    vertical: AppSpacing.sm,
-                  ),
-                  child: const _AllClearBanner(),
                 ),
               ),
 
@@ -249,46 +230,10 @@ class _DayProgressCard extends StatelessWidget {
   }
 }
 
-class _AllClearBanner extends StatelessWidget {
-  const _AllClearBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final tt = theme.textTheme;
-    final success = theme.brightness == Brightness.light
-        ? StatusColors.successLight
-        : StatusColors.successDark;
-
-    return FadeSlideIn(
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        decoration: BoxDecoration(
-          color: success.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.check_circle_rounded, color: success, size: 20),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Text(
-                'Nothing left for today. Come back tomorrow.',
-                style: tt.bodySmall?.copyWith(color: success),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _TopicSliver extends ConsumerWidget {
   final List<Topic> topics;
 
-  /// Due and overdue rows get a tick control; "Coming up" rows don't, because
-  /// there's nothing to complete yet.
+  /// Rows in this list are due, so they carry a Revise button.
   final bool completable;
 
   const _TopicSliver({required this.topics, this.completable = false});
@@ -319,11 +264,10 @@ class _TopicSliver extends ConsumerWidget {
                 subjectName: s?.name ?? 'No subject',
                 accent: s?.color ?? cs.primary,
                 relativeLabel: DateLabels.relative(t.nextDueAt),
-                // Tapping opens the quick-look sheet; the full page is one
-                // button away inside it.
-                onTap: () => showTopicSheet(context, ref, t.id),
-                onComplete:
-                    completable ? () => _complete(context, ref, t) : null,
+                onTap: () => context.push('/topic/${t.id}'),
+                onRevise: completable
+                    ? () => reviseTopic(context, ref, t.id, t.title)
+                    : null,
               ),
             ),
           ),
@@ -332,35 +276,4 @@ class _TopicSliver extends ConsumerWidget {
     );
   }
 
-  Future<void> _complete(
-    BuildContext context,
-    WidgetRef ref,
-    Topic t,
-  ) async {
-    HapticFeedback.selectionClick();
-    // Same wording as the sheet's button — one shared confirmation.
-    final ok = await confirmCompletion(context, t.title);
-    if (!ok || !context.mounted) return;
-
-    HapticFeedback.lightImpact();
-    final days =
-        await ref.read(topicCommandsProvider).markRevisedToday(t.id);
-    if (!context.mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            days <= 1
-                ? 'Done · back tomorrow'
-                : 'Done · next review in $days days',
-          ),
-          action: SnackBarAction(
-            label: 'Open',
-            onPressed: () => context.push('/topic/${t.id}'),
-          ),
-        ),
-      );
-  }
 }

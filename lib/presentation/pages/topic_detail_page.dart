@@ -11,8 +11,10 @@ import '../../core/utils/date_utils.dart';
 import '../../domain/entities/topic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
+import '../widgets/attachment_editor.dart';
 import '../widgets/delete_confirm.dart';
 import '../widgets/motion.dart';
+import '../widgets/revise_action.dart';
 
 class TopicDetailPage extends ConsumerStatefulWidget {
   final String topicId;
@@ -244,6 +246,24 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage> {
             const SizedBox(height: AppSpacing.xxl),
             FadeSlideIn(
               index: 2,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Attachments', style: tt.titleMedium),
+                  const SizedBox(height: AppSpacing.md),
+                  AttachmentEditor(
+                    topicId: topic.id,
+                    attachments: topic.attachments,
+                    onChanged: (v) => ref
+                        .read(topicCommandsProvider)
+                        .setAttachments(topic.id, v),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xxl),
+            FadeSlideIn(
+              index: 3,
               child: topic.status == TopicStatus.completed
                   ? _MasteredPanel(topic: topic)
                   : _ReviewPanel(topic: topic),
@@ -255,75 +275,81 @@ class _TopicDetailPageState extends ConsumerState<TopicDetailPage> {
   }
 }
 
-/// The rating control.
+/// The revision control.
 ///
-/// Each button previews the interval it would schedule — the engine can tell us
-/// exactly, and seeing "Good · 7d" before committing makes the spacing system
-/// legible instead of opaque.
+/// One button, not a four-way rating. The Forgot/Hard/Good/Easy grades were
+/// removed at the user's request: they asked to be shown once whether they had
+/// revised a topic, not to grade the quality of every recall. Every revision
+/// now records the same neutral result, so the interval still lengthens on the
+/// usual ladder without asking the user to self-score.
 class _ReviewPanel extends ConsumerWidget {
   final Topic topic;
   const _ReviewPanel({required this.topic});
 
-  static const _labels = ['Forgot', 'Hard', 'Good', 'Easy'];
-  static const _ratings = [
-    ReviewRating.forgot,
-    ReviewRating.hard,
-    ReviewRating.good,
-    ReviewRating.easy,
-  ];
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final colors = StatusColors.ratings(theme.brightness);
-    final engine = ref.read(engineProvider);
+    final due = topic.isDue;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('How well did you remember?', style: tt.titleMedium),
+        Text(due ? 'Ready to revise?' : 'Next revision', style: tt.titleMedium),
         const SizedBox(height: AppSpacing.xs),
         Text(
-          'Your answer sets the next reminder.',
-          style: tt.labelSmall,
+          due
+              ? 'Mark it done once you have been through the material.'
+              : 'This topic is not due yet — it will appear on your home '
+                  'screen on ${DateLabels.relative(topic.nextDueAt)}.',
+          style: tt.labelSmall?.copyWith(height: 1.5),
         ),
         const SizedBox(height: AppSpacing.lg),
-        Row(
-          children: [
-            for (var i = 0; i < 4; i++) ...[
-              Expanded(
-                child: _RatingButton(
-                  label: _labels[i],
-                  interval: _fmt(
-                    engine.schedule(topic, _ratings[i]).nextIntervalDays,
-                  ),
-                  color: colors[i],
-                  onTap: () async {
-                    HapticFeedback.lightImpact();
-                    await ref
-                        .read(topicCommandsProvider)
-                        .reviewTopic(topic.id, _ratings[i]);
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context)
-                      ..hideCurrentSnackBar()
-                      ..showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Saved · next in ${_fmt(engine.schedule(topic, _ratings[i]).nextIntervalDays)}',
-                          ),
-                        ),
-                      );
-                  },
+
+        // Only offered while the topic is actually due. Once revised its next
+        // due date moves forward, so the button disappears and a topic can't
+        // be revised twice for the same date.
+        if (due)
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(double.infinity, 54),
+            ),
+            icon: const Icon(Icons.check_rounded, size: 20),
+            label: const Text('Revised'),
+            onPressed: () async {
+              await reviseTopic(context, ref, topic.id, topic.title);
+            },
+          )
+        else
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.event_available_rounded,
+                  size: 19,
+                  color: cs.onSurfaceVariant,
                 ),
-              ),
-              if (i < 3) const SizedBox(width: AppSpacing.sm),
-            ],
-          ],
-        ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Text(
+                    '${DateLabels.relative(topic.nextDueAt)} at '
+                    '${DateLabels.time(topic.nextDueAt)}',
+                    style: tt.bodyMedium,
+                  ),
+                ),
+              ],
+            ),
+          ),
 
         const SizedBox(height: AppSpacing.xxl),
-        Divider(color: Theme.of(context).colorScheme.outlineVariant),
+        Divider(color: cs.outlineVariant),
         const SizedBox(height: AppSpacing.lg),
 
         // The "I know this now" exit. One clear, full-width control rather
@@ -340,7 +366,7 @@ class _ReviewPanel extends ConsumerWidget {
         OutlinedButton.icon(
           style: OutlinedButton.styleFrom(
             minimumSize: const Size(double.infinity, 52),
-            foregroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: cs.primary,
           ),
           icon: const Icon(Icons.task_alt_rounded, size: 20),
           label: const Text('Stop repetition — I know this'),
@@ -379,14 +405,6 @@ class _ReviewPanel extends ConsumerWidget {
         ),
       ],
     );
-  }
-
-  static String _fmt(int days) {
-    if (days <= 0) return 'today';
-    if (days == 1) return '1 day';
-    if (days < 30) return '$days days';
-    if (days < 365) return '${(days / 30).round()} mo';
-    return '${(days / 365).round()} yr';
   }
 }
 
@@ -455,57 +473,6 @@ class _MasteredPanel extends ConsumerWidget {
           },
         ),
       ],
-    );
-  }
-}
-
-class _RatingButton extends StatelessWidget {
-  final String label;
-  final String interval;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _RatingButton({
-    required this.label,
-    required this.interval,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final tt = Theme.of(context).textTheme;
-    return Material(
-      color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.md + 2),
-          child: Column(
-            children: [
-              Text(
-                label,
-                style: tt.labelMedium?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                interval,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: tt.labelSmall?.copyWith(
-                  color: color.withValues(alpha: 0.75),
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_tokens.dart';
+import '../../domain/entities/attachment.dart';
 import '../../domain/entities/topic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
+import '../widgets/attachment_editor.dart';
 import '../widgets/form_section.dart';
 
 /// Combined Create + Edit page. If [editId] is non-null, loads the topic and
@@ -38,6 +41,12 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
   bool _persistent = true;
   bool _busy = false;
   Topic? _existing;
+  List<Attachment> _attachments = const [];
+
+  /// Fixed up front so attachments can be copied into this topic's folder
+  /// while the form is still being filled in.
+  late final String _topicId =
+      widget.editId ?? const Uuid().v4();
 
   bool get _isEdit => widget.editId != null;
 
@@ -57,6 +66,7 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
         _minutes = t.estimatedMinutes;
         _reminder = TimeOfDay(hour: t.reminderHour, minute: t.reminderMinute);
         _persistent = t.persistentReminders;
+        _attachments = t.attachments;
       }
     }
   }
@@ -101,6 +111,7 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
         reminderHour: _reminder.hour,
         reminderMinute: _reminder.minute,
         persistentReminders: _persistent,
+        attachments: _attachments,
       );
     } else {
       await cmd.createTopic(
@@ -113,6 +124,8 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
         reminderHour: _reminder.hour,
         reminderMinute: _reminder.minute,
         persistentReminders: _persistent,
+        attachments: _attachments,
+        presetId: _topicId,
       );
     }
     if (mounted) context.pop();
@@ -276,6 +289,16 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
                     style: tt.labelSmall,
                   ),
                 ),
+              ),
+            ),
+
+            FormSection(
+              label: 'Attachments',
+              hint: 'Optional · files, images, videos or links',
+              child: AttachmentEditor(
+                topicId: _topicId,
+                attachments: _attachments,
+                onChanged: (v) => setState(() => _attachments = v),
               ),
             ),
 

@@ -13,7 +13,6 @@ import '../widgets/delete_confirm.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/motion.dart';
 import '../widgets/topic_card.dart';
-import '../widgets/topic_sheet.dart';
 
 class SubjectDetailPage extends ConsumerWidget {
   final String subjectId;
@@ -233,7 +232,7 @@ class SubjectDetailPage extends ConsumerWidget {
                           subjectName: subject.name,
                           accent: subject.color,
                           relativeLabel: DateLabels.relative(t.nextDueAt),
-                          onTap: () => showTopicSheet(context, ref, t.id),
+                          onTap: () => context.push('/topic/${t.id}'),
                         ),
                       ),
                     );

@@ -4,12 +4,14 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/repositories/subject_repository_impl.dart';
 import '../../data/repositories/topic_repository_impl.dart';
+import '../../domain/entities/attachment.dart';
 import '../../domain/entities/review.dart';
 import '../../domain/entities/subject.dart';
 import '../../domain/entities/topic.dart';
 import '../../domain/repositories/subject_repository.dart';
 import '../../domain/repositories/topic_repository.dart';
 import '../../domain/usecases/spaced_repetition_engine.dart';
+import '../../services/attachment_service.dart';
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
 
@@ -55,16 +57,9 @@ final overdueProvider = Provider<List<Topic>>((ref) {
     ..sort((a, b) => a.nextDueAt.compareTo(b.nextDueAt));
 });
 
-final upcomingProvider = Provider<List<Topic>>((ref) {
-  final all = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
-  final now = DateTime.now();
-  final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
-  return all
-      .where((t) =>
-          t.status == TopicStatus.active && t.nextDueAt.isAfter(endOfDay))
-      .toList()
-    ..sort((a, b) => a.nextDueAt.compareTo(b.nextDueAt));
-});
+// `upcomingProvider` was removed with the Today screen's "Coming up"
+// section: the home screen now shows only what is due today.
+
 
 /// Reviews recorded today. Drives the Today screen's progress bar.
 final reviewedTodayCountProvider = Provider<int>((ref) {
@@ -146,8 +141,12 @@ class TopicCommands {
     int reminderHour = 19,
     int reminderMinute = 0,
     bool persistentReminders = true,
+    List<Attachment> attachments = const [],
+    String? presetId,
   }) async {
-    final id = ref.read(uuidProvider).v4();
+    // The create form needs an id up front so attachments can be staged into
+    // the topic's folder before it's saved.
+    final id = presetId ?? ref.read(uuidProvider).v4();
     final now = DateTime.now();
     var topic = Topic(
       id: id,
@@ -163,6 +162,7 @@ class TopicCommands {
       reminderHour: reminderHour,
       reminderMinute: reminderMinute,
       persistentReminders: persistentReminders,
+      attachments: attachments,
     );
     final init = ref.read(engineProvider).initialSchedule(topic, now: now);
     topic = topic.copyWith(nextDueAt: init.nextDueAt);
@@ -188,6 +188,7 @@ class TopicCommands {
     int reminderHour = 19,
     int reminderMinute = 0,
     bool persistentReminders = true,
+    List<Attachment>? attachments,
   }) async {
     final repo = ref.read(topicRepositoryProvider);
     final t = repo.byId(topicId);
@@ -214,6 +215,7 @@ class TopicCommands {
       reminderMinute: reminderMinute,
       persistentReminders: persistentReminders,
       nextDueAt: newDue,
+      attachments: attachments,
     );
     await repo.upsert(updated);
     await NotificationService.instance
@@ -305,6 +307,18 @@ class TopicCommands {
     _backup();
   }
 
+  /// Replace a topic's attachment list (add or remove from the detail page).
+  Future<void> setAttachments(
+    String topicId,
+    List<Attachment> attachments,
+  ) async {
+    final repo = ref.read(topicRepositoryProvider);
+    final t = repo.byId(topicId);
+    if (t == null) return;
+    await repo.upsert(t.copyWith(attachments: attachments));
+    _backup();
+  }
+
   Future<void> snoozeTopic(String topicId, Duration by) async {
     final repo = ref.read(topicRepositoryProvider);
     final t = repo.byId(topicId);
@@ -341,6 +355,9 @@ class TopicCommands {
     final repo = ref.read(topicRepositoryProvider);
     await repo.delete(topicId);
     await repo.deleteReviewsForTopic(topicId);
+    // Attached files live outside Hive, so they'd otherwise sit on disk
+    // forever after the topic that referenced them is gone.
+    await AttachmentService.instance.deleteAllFor(topicId);
     await NotificationService.instance.cancelForTopic(topicId);
     _backup();
   }
@@ -354,6 +371,7 @@ class TopicCommands {
     for (final t in topics) {
       await topicRepo.delete(t.id);
       await topicRepo.deleteReviewsForTopic(t.id);
+      await AttachmentService.instance.deleteAllFor(t.id);
       await NotificationService.instance.cancelForTopic(t.id);
     }
     await subjectRepo.delete(subjectId);

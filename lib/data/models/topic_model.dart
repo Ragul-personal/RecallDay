@@ -1,4 +1,5 @@
 import 'package:hive/hive.dart';
+import '../../domain/entities/attachment.dart';
 import '../../domain/entities/topic.dart';
 
 part 'topic_model.g.dart';
@@ -24,6 +25,9 @@ class TopicModel extends HiveObject {
   @HiveField(16) int reminderHour;
   @HiveField(17) int reminderMinute;
   @HiveField(18) bool persistentReminders;
+  /// JSON-encoded [Attachment]s. A List<String> needs no Hive adapter,
+  /// so this was added without registering a new typeId.
+  @HiveField(19) List<String> attachments;
 
   TopicModel({
     required this.id,
@@ -45,6 +49,7 @@ class TopicModel extends HiveObject {
     this.reminderHour = 19,
     this.reminderMinute = 0,
     this.persistentReminders = true,
+    this.attachments = const [],
   });
 
   factory TopicModel.fromEntity(Topic t) => TopicModel(
@@ -67,6 +72,7 @@ class TopicModel extends HiveObject {
         reminderHour: t.reminderHour,
         reminderMinute: t.reminderMinute,
         persistentReminders: t.persistentReminders,
+        attachments: Attachment.encodeAll(t.attachments),
       );
 
   Topic toEntity() => Topic(
@@ -89,6 +95,7 @@ class TopicModel extends HiveObject {
         reminderHour: reminderHour,
         reminderMinute: reminderMinute,
         persistentReminders: persistentReminders,
+        attachments: Attachment.decodeAll(attachments),
       );
 
   Map<String, dynamic> toJson() => {
@@ -103,6 +110,7 @@ class TopicModel extends HiveObject {
         'statusIndex': statusIndex,
         'reminderHour': reminderHour, 'reminderMinute': reminderMinute,
         'persistentReminders': persistentReminders,
+        'attachments': attachments,
       };
 
   factory TopicModel.fromJson(Map<String, dynamic> j) => TopicModel(
@@ -127,5 +135,7 @@ class TopicModel extends HiveObject {
         reminderHour: (j['reminderHour'] as int?) ?? 19,
         reminderMinute: (j['reminderMinute'] as int?) ?? 0,
         persistentReminders: (j['persistentReminders'] as bool?) ?? true,
+        attachments:
+            (j['attachments'] as List?)?.cast<String>() ?? const [],
       );
 }

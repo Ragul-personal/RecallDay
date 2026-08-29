@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import 'attachment.dart';
+
 /// User self-rating after a review session. Drives the SM-2-derived ease update.
 enum ReviewRating {
   forgot,   // failed recall — restart interval, decrease ease
@@ -48,6 +50,9 @@ class Topic extends Equatable {
   final int reminderMinute;        // 0..59
   final bool persistentReminders;  // re-fire daily until reviewed
 
+  /// Files, images, videos and links saved against this topic.
+  final List<Attachment> attachments;
+
   const Topic({
     required this.id,
     required this.subjectId,
@@ -68,6 +73,7 @@ class Topic extends Equatable {
     this.reminderHour = 19,
     this.reminderMinute = 0,
     this.persistentReminders = true,
+    this.attachments = const [],
   });
 
   bool get isDue =>
@@ -94,6 +100,7 @@ class Topic extends Equatable {
     int? reminderHour,
     int? reminderMinute,
     bool? persistentReminders,
+    List<Attachment>? attachments,
   }) {
     return Topic(
       id: id,
@@ -115,6 +122,7 @@ class Topic extends Equatable {
       reminderHour: reminderHour ?? this.reminderHour,
       reminderMinute: reminderMinute ?? this.reminderMinute,
       persistentReminders: persistentReminders ?? this.persistentReminders,
+      attachments: attachments ?? this.attachments,
     );
   }
 
@@ -123,6 +131,6 @@ class Topic extends Equatable {
         id, subjectId, title, notes, tags, priority, difficulty,
         estimatedMinutes, createdAt, repetitions, ease, currentIntervalDays,
         ladderIndex, nextDueAt, lastReviewedAt, status, reminderHour,
-        reminderMinute, persistentReminders,
+        reminderMinute, persistentReminders, attachments,
       ];
 }
