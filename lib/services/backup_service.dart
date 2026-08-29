@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+
+import 'saf_service.dart';
 
 import '../data/models/review_model.dart';
 import '../data/models/subject_model.dart';
@@ -60,6 +63,9 @@ class BackupService {
 
   /// The automatic snapshot, in app-private storage.
   static const String _autoFileName = 'recallday-backup.json';
+
+  /// Name of the full archive inside the user's chosen folder.
+  static const String _archiveFileName = 'recallday-backup.zip';
 
   /// Entry names inside an exported archive.
   static const String _archiveData = 'data.json';
@@ -119,15 +125,28 @@ class BackupService {
     }
   }
 
-  /// Write the automatic snapshot. App-private, so it cannot fail for
-  /// permission reasons.
+  /// Write the automatic snapshot.
+  ///
+  /// Always to app-private storage, which cannot fail for permission reasons.
+  /// Then, if the user has nominated a folder, the same JSON is mirrored there
+  /// — that copy is what survives an uninstall, and it is why the export step
+  /// is optional rather than the only durable route.
   Future<BackupResult> writeAutoBackup() async {
     try {
+      final json = buildSnapshotJson();
       final f = await _autoFile();
-      await f.writeAsString(buildSnapshotJson(), flush: true);
+      await f.writeAsString(json, flush: true);
+
+      final mirrored = await SafService.instance.writeFile(
+        _autoFileName,
+        Uint8List.fromList(utf8.encode(json)),
+        mime: 'application/json',
+      );
+
       final store = StorageService.instance;
       return BackupResult.success(
         path: f.path,
+        mirroredToFolder: mirrored,
         subjects: store.subjects.length,
         topics: store.topics.length,
         reviews: store.reviews.length,
@@ -136,6 +155,50 @@ class BackupService {
       debugPrint('[backup] auto write failed: $e\n$st');
       return BackupResult.failure('$e');
     }
+  }
+
+  /// Write the full archive (data + attachments) into the chosen folder.
+  ///
+  /// Heavier than the JSON mirror, so this runs when the app goes to the
+  /// background and on an explicit request, not on every keystroke-free edit.
+  Future<bool> mirrorArchiveToFolder() async {
+    if (!await SafService.instance.hasAccess()) return false;
+    try {
+      final file = await buildArchiveFile();
+      final ok = await SafService.instance.writeFile(
+        _archiveFileName,
+        await file.readAsBytes(),
+        mime: 'application/zip',
+      );
+      return ok;
+    } catch (e) {
+      debugPrint('[backup] archive mirror failed: $e');
+      return false;
+    }
+  }
+
+  /// Restore from the chosen folder: the archive if present (it carries
+  /// attachments), else the JSON snapshot.
+  Future<RestoreSummary?> restoreFromFolder({bool merge = true}) async {
+    final saf = SafService.instance;
+    if (!await saf.hasAccess()) return null;
+
+    final zip = await saf.readFile(_archiveFileName);
+    if (zip != null) return restoreFromArchiveBytes(zip, merge: merge);
+
+    final json = await saf.readFile(_autoFileName);
+    if (json != null) {
+      return restoreFromJson(utf8.decode(json), merge: merge);
+    }
+    return null;
+  }
+
+  /// Whether the chosen folder holds anything restorable.
+  Future<bool> folderHasBackup() async {
+    final saf = SafService.instance;
+    if (!await saf.hasAccess()) return false;
+    return await saf.readFile(_archiveFileName) != null ||
+        await saf.readFile(_autoFileName) != null;
   }
 
   /// Write now and report. Used on app background and by Settings.
@@ -441,6 +504,11 @@ class BackupResult {
   final bool ok;
   final String? path;
   final String? error;
+
+  /// True when the snapshot also reached the user's chosen folder — the copy
+  /// that outlives an uninstall.
+  final bool mirroredToFolder;
+
   final int subjects, topics, reviews;
 
   const BackupResult.success({
@@ -448,12 +516,14 @@ class BackupResult {
     required this.subjects,
     required this.topics,
     required this.reviews,
+    this.mirroredToFolder = false,
   })  : ok = true,
         error = null;
 
   const BackupResult.failure(this.error)
       : ok = false,
         path = null,
+        mirroredToFolder = false,
         subjects = 0,
         topics = 0,
         reviews = 0;

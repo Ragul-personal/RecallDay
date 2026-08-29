@@ -124,6 +124,9 @@ class _AppRootState extends ConsumerState<_AppRoot>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(BackupService.instance.flush());
+      // The archive carries attachments and is far heavier than the JSON
+      // snapshot, so it's mirrored on the way out rather than after every edit.
+      unawaited(BackupService.instance.mirrorArchiveToFolder());
     }
   }
 

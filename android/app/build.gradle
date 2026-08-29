@@ -70,6 +70,21 @@ android {
         }
     }
 
+    // Release signing.
+    //
+    // This matters far more than it looks. Android only allows an APK to be
+    // installed over an existing one when both are signed by the SAME key. CI
+    // previously had no keystore and fell through to debug signing, and Gradle
+    // generates a fresh debug key on each clean runner — so every release had a
+    // different signature, could not be installed over the last one, and forced
+    // an uninstall. Uninstalling wipes app-private storage, which is why the
+    // user's data was destroyed on every single update.
+    //
+    // The key is passed in by CI as a base64 secret (see build-apk.yml) and
+    // written to android/app/release.p12. Locally, android/key.properties still
+    // works for anyone who prefers that.
+    def ciKeystore = file('release.p12')
+
     signingConfigs {
         release {
             if (keystorePropertiesFile.exists()) {
@@ -77,15 +92,23 @@ android {
                 keyPassword = keystoreProperties['keyPassword']
                 storeFile = keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
                 storePassword = keystoreProperties['storePassword']
+            } else if (ciKeystore.exists()) {
+                storeType = 'PKCS12'
+                storeFile = ciKeystore
+                storePassword = System.getenv('KEYSTORE_PASSWORD')
+                keyAlias = 'recallday'
+                keyPassword = System.getenv('KEYSTORE_PASSWORD')
             }
         }
     }
 
     buildTypes {
         release {
-            // Falls back to debug signing if no key.properties is present —
-            // fine for personal sideload, NOT for Play Store.
-            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
+            // Debug signing is the last resort. It produces an APK that cannot
+            // be installed over a previous release, so prefer a real key.
+            signingConfig = (keystorePropertiesFile.exists() || ciKeystore.exists())
+                ? signingConfigs.release
+                : signingConfigs.debug
             minifyEnabled true       // R8 strips unused Dart/Kotlin
             shrinkResources true     // drops unused PNGs/XMLs
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -119,4 +142,7 @@ flutter {
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
     implementation 'androidx.work:work-runtime-ktx:2.9.1'
+    // DocumentFile wraps the SAF tree the user picks for backups
+    // (see MainActivity.kt).
+    implementation 'androidx.documentfile:documentfile:1.0.1'
 }

@@ -37,6 +37,24 @@ jobs:
           # "stable" with no pinned version tracks whatever's current.
           cache: true
 
+      # Decode the release signing key. Without it Gradle falls back to a
+      # debug key that is regenerated on every runner, so each build gets a
+      # different signature and cannot be installed over the previous release
+      # — which forces an uninstall and destroys the user's data.
+      - name: Restore signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.p12
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Release keystore restored."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No KEYSTORE_BASE64 secret. This build will be debug-signed and CANNOT be installed over an existing RecallDay."
+          fi
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -50,6 +68,8 @@ jobs:
       - name: Build release APK (per-ABI split)
         # --build-name/--build-number stamp the release number into the APK, so
         # Android's app info and the GitHub release agree on the version.
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: >
           flutter build apk --release --split-per-abi
           --build-name=${{ steps.ver.outputs.n }}.0.0
@@ -65,6 +85,8 @@ jobs:
 
             Download **`app-arm64-v8a-release.apk`** — that's the right one for
             virtually every modern Android phone.
+
+            ${{ steps.signing.outputs.signed == 'true' && 'Install it straight over your existing copy; your data is kept.' || '⚠️ Debug-signed build — you must uninstall first, which erases your data.' }}
 
             Built from commit ${{ github.sha }}.
           allowUpdates: true

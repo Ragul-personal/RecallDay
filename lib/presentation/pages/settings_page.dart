@@ -8,6 +8,7 @@ import '../../core/theme/app_tokens.dart';
 import '../../core/utils/date_utils.dart';
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/saf_service.dart';
 import '../providers/providers.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/app_logo.dart';
@@ -22,6 +23,8 @@ class SettingsPage extends ConsumerStatefulWidget {
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   PermissionReport? _perms;
   DateTime? _lastAuto;
+  String? _folderName;
+  bool _folderOk = false;
   bool _busy = false;
 
   @override
@@ -33,10 +36,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _refreshStatus() async {
     final perms = await NotificationService.instance.permissionStatus();
     final saved = await BackupService.instance.lastAutoBackupAt();
+    final ok = await SafService.instance.hasAccess();
+    final name = ok ? await SafService.instance.folderName() : null;
     if (!mounted) return;
     setState(() {
       _perms = perms;
       _lastAuto = saved;
+      _folderOk = ok;
+      _folderName = name;
     });
   }
 
@@ -266,6 +273,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final light = Theme.of(context).brightness == Brightness.light;
     final success =
         light ? StatusColors.successLight : StatusColors.successDark;
+    final warning =
+        light ? StatusColors.warningLight : StatusColors.warningDark;
     final saved = _lastAuto;
 
     return _Group(
@@ -279,24 +288,48 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             AppSpacing.md,
           ),
           child: _StatusBanner(
-            ok: saved != null,
-            color: success,
-            title: saved == null
-                ? 'Saving automatically'
-                : 'Saved automatically',
-            message: saved == null
-                ? 'Every change is saved on this device as you make it.'
-                : 'Every change is saved on this device as you make it — last '
-                    'at ${DateLabels.time(saved)}. Android deletes this copy '
-                    'if the app is uninstalled, so export a file to keep it.',
+            ok: _folderOk,
+            color: _folderOk ? success : warning,
+            title: _folderOk
+                ? 'Saving to ${_folderName ?? 'your folder'}'
+                : 'Saved on this device only',
+            message: _folderOk
+                ? 'Every change is written to your folder automatically'
+                    '${saved == null ? '' : ' — last at ${DateLabels.time(saved)}'}. '
+                    'That copy stays put if you uninstall the app; just pick '
+                    'the same folder again afterwards.'
+                : 'Every change is saved automatically, but only inside the '
+                    'app — Android deletes it if RecallDay is uninstalled. '
+                    'Choose a folder below and backups keep working on their '
+                    'own, with nothing to export.',
           ),
         ),
         ListTile(
+          leading: Icon(
+            Icons.folder_special_outlined,
+            color: _folderOk ? null : Theme.of(context).colorScheme.primary,
+          ),
+          title: Text(_folderOk ? 'Change backup folder' : 'Choose backup folder'),
+          subtitle: Text(
+            _folderOk
+                ? 'Currently ${_folderName ?? 'selected'}'
+                : 'Pick once — after that it saves there by itself',
+          ),
+          onTap: _busy ? null : _pickFolder,
+        ),
+        if (_folderOk)
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Restore from folder'),
+            subtitle: const Text('Read the backup back out of your folder'),
+            onTap: _busy ? null : _restoreFromFolder,
+          ),
+        ListTile(
           leading: const Icon(Icons.ios_share_rounded),
-          title: const Text('Export backup file'),
+          title: const Text('Export a copy'),
           subtitle: const Text(
-            'One .zip with everything, including attachments — save it to '
-            'Drive, Files, or send it to yourself',
+            'One .zip with everything, including attachments — for a second '
+            'copy somewhere else',
           ),
           onTap: _busy
               ? null
@@ -310,12 +343,74 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ),
         ListTile(
           leading: const Icon(Icons.file_open_outlined),
-          title: const Text('Import backup file'),
-          subtitle: const Text('Pick a .zip or .json backup to restore'),
+          title: const Text('Import a file'),
+          subtitle: const Text('Restore from a .zip or .json you saved'),
           onTap: _busy ? null : _import,
         ),
       ],
     );
+  }
+
+  Future<void> _pickFolder() async {
+    final uri = await SafService.instance.pickFolder();
+    if (uri == null || !mounted) return;
+
+    setState(() => _busy = true);
+    // Write straight away so the folder isn't empty and, more importantly, so
+    // any failure surfaces now rather than silently at some later save.
+    final r = await BackupService.instance.flush();
+    await BackupService.instance.mirrorArchiveToFolder();
+    await _refreshStatus();
+    if (!mounted) return;
+    setState(() => _busy = false);
+
+    if (r.mirroredToFolder) {
+      _toast('Backing up to ${_folderName ?? 'your folder'} from now on');
+    } else {
+      await _details(
+        'Folder not writable',
+        'RecallDay could not write to that folder. Pick a different one — a '
+        'folder on internal storage such as Documents or Download works best. '
+        'Folders provided by some cloud apps are read-only.',
+      );
+    }
+  }
+
+  Future<void> _restoreFromFolder() async {
+    final ok = await confirmDelete(
+      context,
+      title: 'Restore from your folder?',
+      message: 'Subjects and topics with the same id are overwritten; '
+          'anything else you have now is kept.',
+      confirmLabel: 'Restore',
+      destructive: false,
+    );
+    if (!ok || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final summary =
+          await BackupService.instance.restoreFromFolder(merge: true);
+      await ref.read(topicCommandsProvider).reArmAllNotifications();
+      if (!mounted) return;
+      if (summary == null) {
+        await _details(
+          'Nothing to restore',
+          'That folder has no RecallDay backup in it yet.',
+        );
+      } else if (summary.isEmpty) {
+        await _details(
+          'Nothing restored',
+          'The backup was read but contained no subjects or topics.',
+        );
+      } else {
+        _toast('Restored $summary');
+      }
+    } catch (e) {
+      if (mounted) await _details('Restore failed', '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _import() async {

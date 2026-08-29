@@ -37,3 +37,7 @@ lib/firebase_options.dart
 *.apk
 *.aab
 android/.kotlin/
+
+# Release signing key — must never be committed.
+.secrets/
+*.p12
