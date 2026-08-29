@@ -66,6 +66,17 @@ final upcomingProvider = Provider<List<Topic>>((ref) {
     ..sort((a, b) => a.nextDueAt.compareTo(b.nextDueAt));
 });
 
+/// Reviews recorded today. Drives the Today screen's progress bar.
+final reviewedTodayCountProvider = Provider<int>((ref) {
+  ref.watch(topicsStreamProvider);
+  final now = DateTime.now();
+  return ref.watch(topicRepositoryProvider).allReviews().where((r) {
+    return r.reviewedAt.year == now.year &&
+        r.reviewedAt.month == now.month &&
+        r.reviewedAt.day == now.day;
+  }).length;
+});
+
 final streakDaysProvider = Provider<int>((ref) {
   // Re-runs whenever topics stream pulses (i.e. after each review is recorded).
   ref.watch(topicsStreamProvider);

@@ -1,111 +1,112 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants/subject_palette.dart';
-import '../../core/theme/app_theme.dart';
+import '../../core/theme/app_tokens.dart';
 import '../providers/providers.dart';
+import '../widgets/app_card.dart';
 import '../widgets/delete_confirm.dart';
 import '../widgets/empty_state.dart';
+import '../widgets/motion.dart';
+import '../widgets/tab_app_bar.dart';
 
+/// Subjects.
+///
+/// Switched from a 2-up square grid to a single-column list. The grid forced
+/// every name to one ellipsised line and left a lot of dead space in each
+/// tile; a list row fits the name, the counts and a progress hint comfortably,
+/// and scans faster because everything is on one axis.
 class SubjectsPage extends ConsumerWidget {
   const SubjectsPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs = Theme.of(context).colorScheme;
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
 
-    return Stack(children: [
-      CustomScrollView(slivers: [
-        SliverAppBar(
-          pinned: true,
-          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-          title: const Text('Subjects'),
-        ),
-        if (subjects.isEmpty)
-          const SliverFillRemaining(
-            hasScrollBody: false,
-            child: EmptyState(
-              icon: Icons.bookmark_add_outlined,
-              title: 'No subjects yet',
-              subtitle: 'Group your topics into subjects like DBMS or Algorithms.',
+    return Stack(
+      children: [
+        CustomScrollView(
+          slivers: [
+            TabAppBar(
+              title: 'Subjects',
+              subtitle: subjects.isEmpty
+                  ? null
+                  : '${subjects.length} subject'
+                      '${subjects.length == 1 ? '' : 's'} · '
+                      '${topics.length} topic${topics.length == 1 ? '' : 's'}',
             ),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
-            sliver: SliverGrid.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 1.0,
-              ),
-              itemCount: subjects.length,
-              itemBuilder: (_, i) {
-                final s = subjects[i];
-                final count = topics.where((t) => t.subjectId == s.id).length;
-                final due = topics.where((t) =>
-                    t.subjectId == s.id && t.isDue).length;
-                return Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(18),
-                    onTap: () => context.push('/subject/${s.id}'),
-                    // Long-press for edit/delete without having to open the
-                    // subject first.
-                    onLongPress: () => _showSubjectActions(
-                        context, ref, s.id, s.name, count),
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainer,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: cs.outline, width: 0.6),
-                      ),
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 36, height: 36,
-                            decoration: BoxDecoration(
-                              color: s.color.withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Icon(SubjectPalette.iconFor(s.iconKey),
-                                color: s.color, size: 20),
-                          ),
-                          const Spacer(),
-                          Text(s.name,
-                              maxLines: 1, overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 4),
-                          Text('$count topics · $due due',
-                              style: const TextStyle(fontSize: 12.5, color: AppTheme.textMuted)),
-                        ],
-                      ),
-                    ),
+            if (subjects.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyState(
+                  icon: Icons.folder_open_rounded,
+                  title: 'No subjects yet',
+                  subtitle:
+                      'Subjects group your topics — Algorithms, Anatomy, '
+                      'Spanish. Create one to get started.',
+                  action: FilledButton.icon(
+                    onPressed: () => context.push('/create/subject'),
+                    icon: const Icon(Icons.add_rounded, size: 20),
+                    label: const Text('New subject'),
                   ),
-                ).animate(delay: (40 * i).ms).fadeIn(duration: 250.ms);
-              },
-            ),
-          ),
-      ]),
-      Positioned(
-        right: 20, bottom: 20,
-        child: FloatingActionButton.extended(
-          onPressed: () => context.push('/create/subject'),
-          icon: const Icon(Icons.add),
-          label: const Text('New subject'),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.gutter,
+                  AppSpacing.xs,
+                  AppSpacing.gutter,
+                  AppSpacing.bottomInset,
+                ),
+                sliver: SliverList.separated(
+                  itemCount: subjects.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: AppSpacing.sm),
+                  itemBuilder: (_, i) {
+                    final s = subjects[i];
+                    final mine =
+                        topics.where((t) => t.subjectId == s.id).toList();
+                    final due = mine.where((t) => t.isDue).length;
+                    return FadeSlideIn(
+                      index: i,
+                      child: _SubjectRow(
+                        name: s.name,
+                        color: s.color,
+                        iconKey: s.iconKey,
+                        total: mine.length,
+                        due: due,
+                        onTap: () => context.push('/subject/${s.id}'),
+                        onLongPress: () => _showActions(
+                          context,
+                          ref,
+                          s.id,
+                          s.name,
+                          mine.length,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
         ),
-      ),
-    ]);
+        Positioned(
+          right: AppSpacing.gutter,
+          bottom: AppSpacing.gutter,
+          child: FloatingActionButton.extended(
+            onPressed: () => context.push('/create/subject'),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('New subject'),
+          ),
+        ),
+      ],
+    );
   }
 
-  Future<void> _showSubjectActions(
+  Future<void> _showActions(
     BuildContext context,
     WidgetRef ref,
     String subjectId,
@@ -114,31 +115,57 @@ class SubjectsPage extends ConsumerWidget {
   ) async {
     final action = await showModalBottomSheet<String>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: Text(name,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text('$topicCount topic${topicCount == 1 ? '' : 's'}'),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: const Text('Edit subject'),
-              onTap: () => Navigator.pop(ctx, 'edit'),
-            ),
-            ListTile(
-              leading: Icon(Icons.delete_outline,
-                  color: Theme.of(ctx).colorScheme.error),
-              title: Text('Delete subject',
-                  style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
-          ],
-        ),
-      ),
+      builder: (ctx) {
+        final tt = Theme.of(ctx).textTheme;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.gutter,
+                  AppSpacing.sm,
+                  AppSpacing.gutter,
+                  AppSpacing.lg,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name, style: tt.titleMedium),
+                          Text(
+                            '$topicCount topic${topicCount == 1 ? '' : 's'}',
+                            style: tt.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit subject'),
+                onTap: () => Navigator.pop(ctx, 'edit'),
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.delete_outline_rounded,
+                  color: Theme.of(ctx).colorScheme.error,
+                ),
+                title: Text(
+                  'Delete subject',
+                  style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+                ),
+                onTap: () => Navigator.pop(ctx, 'delete'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+          ),
+        );
+      },
     );
 
     if (action == null || !context.mounted) return;
@@ -158,5 +185,82 @@ class SubjectsPage extends ConsumerWidget {
     );
     if (!ok) return;
     await ref.read(topicCommandsProvider).deleteSubjectCascading(subjectId);
+  }
+}
+
+class _SubjectRow extends StatelessWidget {
+  final String name;
+  final Color color;
+  final String iconKey;
+  final int total;
+  final int due;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _SubjectRow({
+    required this.name,
+    required this.color,
+    required this.iconKey,
+    required this.total,
+    required this.due,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
+    final c = SubjectPalette.readable(color, theme.brightness);
+
+    return AppCard(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      padding: const EdgeInsets.all(AppSpacing.md + 2),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: c.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Icon(SubjectPalette.iconFor(iconKey), color: c, size: 21),
+          ),
+          const SizedBox(width: AppSpacing.md + 2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  total == 0
+                      ? 'No topics yet'
+                      : '$total topic${total == 1 ? '' : 's'}',
+                  style: tt.labelSmall,
+                ),
+              ],
+            ),
+          ),
+          if (due > 0) ...[
+            AppPill('$due due', color: c, tonal: true),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
+        ],
+      ),
+    );
   }
 }

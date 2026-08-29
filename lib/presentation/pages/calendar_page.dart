@@ -3,10 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:table_calendar/table_calendar.dart';
 
-import '../../core/theme/app_theme.dart';
+import '../../core/constants/subject_palette.dart';
+import '../../core/theme/app_tokens.dart';
 import '../../core/utils/date_utils.dart';
 import '../../domain/entities/topic.dart';
 import '../providers/providers.dart';
+import '../widgets/app_card.dart';
+import '../widgets/motion.dart';
+import '../widgets/tab_app_bar.dart';
 
 /// Calendar entry — one per (topic, projected due date). [isFirm] is true
 /// only for the topic's currently scheduled `nextDueAt`; later entries on
@@ -34,12 +38,14 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
+
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
     final engine = ref.watch(engineProvider);
 
-    // Build the (topic × projected-due-date) flat list and bucket by day.
     final entriesByDay = <DateTime, List<_CalEntry>>{};
     for (final t in topics) {
       if (t.status != TopicStatus.active) continue;
@@ -55,157 +61,164 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 
     final selectedKey =
         DateTime(_selected.year, _selected.month, _selected.day);
-    final entriesOnSelected = (entriesByDay[selectedKey] ?? const <_CalEntry>[])
-        .toList()
+    final entries = (entriesByDay[selectedKey] ?? const <_CalEntry>[]).toList()
       ..sort((a, b) => a.due.compareTo(b.due));
 
-    return CustomScrollView(slivers: [
-      SliverAppBar(
-        pinned: true,
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        title: const Text('Calendar'),
-      ),
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Container(
-            decoration: BoxDecoration(
-              color: cs.surfaceContainer,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: cs.outline, width: 0.6),
-            ),
-            padding: const EdgeInsets.all(8),
-            child: TableCalendar<_CalEntry>(
-              firstDay: DateTime.now().subtract(const Duration(days: 365)),
-              lastDay: DateTime.now().add(const Duration(days: 365 * 2)),
-              focusedDay: _focused,
-              calendarFormat: _format,
-              startingDayOfWeek: StartingDayOfWeek.monday,
-              selectedDayPredicate: (d) => _sameDay(d, _selected),
-              onDaySelected: (sel, foc) =>
-                  setState(() { _selected = sel; _focused = foc; }),
-              onFormatChanged: (f) => setState(() => _format = f),
-              eventLoader: (day) =>
-                  entriesByDay[DateTime(day.year, day.month, day.day)] ??
-                  const [],
-              calendarBuilders: CalendarBuilders<_CalEntry>(
-                markerBuilder: (context, day, events) {
-                  if (events.isEmpty) return null;
-                  final hasFirm = events.any((e) => e.isFirm);
-                  return Positioned(
-                    bottom: 4,
-                    child: Container(
-                      width: 6, height: 6,
-                      decoration: BoxDecoration(
-                        color: hasFirm
-                            ? cs.primary
-                            : cs.primary.withValues(alpha: 0.40),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              calendarStyle: CalendarStyle(
-                todayDecoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.18),
-                    shape: BoxShape.circle),
-                todayTextStyle: TextStyle(
-                    color: cs.primary, fontWeight: FontWeight.w600),
-                selectedDecoration: BoxDecoration(
-                    color: cs.primary, shape: BoxShape.circle),
-                outsideDaysVisible: false,
-              ),
-              headerStyle: const HeaderStyle(
-                titleCentered: true,
-                formatButtonShowsNext: false,
-              ),
-            ),
-          ),
-        ),
-      ),
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
-          child: Row(children: [
-            Text(DateLabels.relative(_selected),
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, fontSize: 16)),
-            const SizedBox(width: 8),
-            Text('· ${entriesOnSelected.length} planned',
-                style: const TextStyle(
-                    color: AppTheme.textMuted, fontSize: 13)),
-          ]),
-        ),
-      ),
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-          child: Row(children: [
-            _LegendDot(color: cs.primary, label: 'Scheduled'),
-            const SizedBox(width: 12),
-            _LegendDot(
-                color: cs.primary.withValues(alpha: 0.40),
-                label: 'Projected'),
-          ]),
-        ),
-      ),
-      if (entriesOnSelected.isEmpty)
-        const SliverToBoxAdapter(
+    return CustomScrollView(
+      slivers: [
+        const TabAppBar(title: 'Calendar'),
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.fromLTRB(20, 8, 20, 24),
-            child: Text('Nothing planned this day.',
-                style: TextStyle(color: AppTheme.textMuted)),
-          ),
-        )
-      else
-        SliverList.separated(
-          itemCount: entriesOnSelected.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (_, i) {
-            final e = entriesOnSelected[i];
-            final s =
-                subjects.where((s) => s.id == e.topic.subjectId).firstOrNull;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _PlannedEntryCard(
-                entry: e,
-                subjectName: s?.name ?? '—',
-                accent: s?.color ?? cs.primary,
-                onTap: () => context.push('/topic/${e.topic.id}'),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.gutter,
+              AppSpacing.xs,
+              AppSpacing.gutter,
+              0,
+            ),
+            child: AppCard(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                AppSpacing.md,
+                AppSpacing.sm,
+                AppSpacing.sm,
               ),
-            );
-          },
+              child: TableCalendar<_CalEntry>(
+                firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                lastDay: DateTime.now().add(const Duration(days: 365 * 2)),
+                focusedDay: _focused,
+                calendarFormat: _format,
+                startingDayOfWeek: StartingDayOfWeek.monday,
+                availableGestures: AvailableGestures.horizontalSwipe,
+                selectedDayPredicate: (d) => _sameDay(d, _selected),
+                onDaySelected: (sel, foc) => setState(() {
+                  _selected = sel;
+                  _focused = foc;
+                }),
+                onFormatChanged: (f) => setState(() => _format = f),
+                onPageChanged: (f) => _focused = f,
+                eventLoader: (day) =>
+                    entriesByDay[DateTime(day.year, day.month, day.day)] ??
+                    const [],
+                daysOfWeekStyle: DaysOfWeekStyle(
+                  weekdayStyle: tt.labelSmall!,
+                  weekendStyle: tt.labelSmall!,
+                ),
+                calendarBuilders: CalendarBuilders<_CalEntry>(
+                  markerBuilder: (context, day, events) {
+                    if (events.isEmpty) return null;
+                    final firm = events.any((e) => e.isFirm);
+                    return Positioned(
+                      bottom: 5,
+                      child: Container(
+                        width: firm ? 5 : 4,
+                        height: firm ? 5 : 4,
+                        decoration: BoxDecoration(
+                          color: firm
+                              ? cs.primary
+                              : cs.primary.withValues(alpha: 0.35),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                calendarStyle: CalendarStyle(
+                  outsideDaysVisible: false,
+                  defaultTextStyle: tt.bodyMedium!,
+                  weekendTextStyle: tt.bodyMedium!,
+                  todayDecoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  todayTextStyle: tt.bodyMedium!.copyWith(
+                    color: cs.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  selectedDecoration: BoxDecoration(
+                    color: cs.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  selectedTextStyle: tt.bodyMedium!.copyWith(
+                    color: cs.onPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                headerStyle: HeaderStyle(
+                  titleCentered: true,
+                  formatButtonVisible: false,
+                  titleTextStyle: tt.titleMedium!,
+                  leftChevronIcon: Icon(
+                    Icons.chevron_left_rounded,
+                    color: cs.onSurfaceVariant,
+                  ),
+                  rightChevronIcon: Icon(
+                    Icons.chevron_right_rounded,
+                    color: cs.onSurfaceVariant,
+                  ),
+                  headerPadding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                ),
+              ),
+            ),
+          ),
         ),
-      const SliverPadding(padding: EdgeInsets.only(bottom: 96)),
-    ]);
+        SliverToBoxAdapter(
+          child: SectionHeader(
+            title: DateLabels.relative(_selected),
+            count: entries.isEmpty ? null : entries.length,
+            accent: cs.primary,
+          ),
+        ),
+        if (entries.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.gutter,
+                0,
+                AppSpacing.gutter,
+                AppSpacing.xl,
+              ),
+              child: Text('Nothing planned this day.', style: tt.bodySmall),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.gutter,
+            ),
+            sliver: SliverList.separated(
+              itemCount: entries.length,
+              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+              itemBuilder: (_, i) {
+                final e = entries[i];
+                final s =
+                    subjects.where((s) => s.id == e.topic.subjectId).firstOrNull;
+                return FadeSlideIn(
+                  index: i,
+                  child: _PlannedRow(
+                    entry: e,
+                    subjectName: s?.name ?? 'No subject',
+                    accent: s?.color ?? cs.primary,
+                    onTap: () => context.push('/topic/${e.topic.id}'),
+                  ),
+                );
+              },
+            ),
+          ),
+        const SliverPadding(
+          padding: EdgeInsets.only(bottom: AppSpacing.bottomInset),
+        ),
+      ],
+    );
   }
 }
 
-class _LegendDot extends StatelessWidget {
-  final Color color;
-  final String label;
-  const _LegendDot({required this.color, required this.label});
-  @override
-  Widget build(BuildContext context) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-        width: 8, height: 8,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      ),
-      const SizedBox(width: 6),
-      Text(label,
-          style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
-    ]);
-  }
-}
-
-class _PlannedEntryCard extends StatelessWidget {
+class _PlannedRow extends StatelessWidget {
   final _CalEntry entry;
   final String subjectName;
   final Color accent;
   final VoidCallback onTap;
-  const _PlannedEntryCard({
+
+  const _PlannedRow({
     required this.entry,
     required this.subjectName,
     required this.accent,
@@ -214,70 +227,54 @@ class _PlannedEntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final t = entry.topic;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
     final firm = entry.isFirm;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Ink(
-          decoration: BoxDecoration(
-            color: cs.surfaceContainer,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-                color: firm
-                    ? cs.outline
-                    : cs.outline.withValues(alpha: 0.5),
-                width: 0.6),
-          ),
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          child: Row(children: [
-            Container(
-              width: 4, height: 36,
-              decoration: BoxDecoration(
-                color: firm ? accent : accent.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(t.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 15.5, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text('$subjectName · ${DateLabels.time(entry.due)}',
-                      style: const TextStyle(
-                          color: AppTheme.textMuted, fontSize: 12.5)),
-                ],
-              ),
-            ),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: firm
-                    ? cs.primary.withValues(alpha: 0.15)
-                    : cs.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                firm ? 'Scheduled' : 'Projected',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: firm ? cs.primary : AppTheme.textMuted,
+    final c = SubjectPalette.readable(accent, theme.brightness);
+
+    return AppCard(
+      onTap: onTap,
+      accent: c,
+      muted: !firm,
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.md + 2,
+        AppSpacing.md,
+        AppSpacing.md + 2,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.topic.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.titleSmall?.copyWith(
+                    color: firm ? null : cs.onSurfaceVariant,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 3),
+                Text(
+                  '$subjectName · ${DateLabels.time(entry.due)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.labelSmall,
+                ),
+              ],
             ),
-          ]),
-        ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // "Projected" dates shift after every review, so they're marked
+          // rather than presented as commitments.
+          if (!firm)
+            AppPill('Projected', color: cs.onSurfaceVariant)
+          else
+            AppPill('Scheduled', color: cs.primary, tonal: true),
+        ],
       ),
     );
   }

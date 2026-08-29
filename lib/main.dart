@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'presentation/providers/providers.dart';
+import 'presentation/providers/theme_provider.dart';
 import 'services/backup_service.dart';
 import 'services/notification_service.dart';
 import 'services/scheduler_worker.dart';
@@ -12,10 +13,10 @@ import 'services/storage_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-  ));
+  // Draw behind the system bars. Icon brightness is NOT forced here — it's set
+  // per-theme in AppBarTheme.systemOverlayStyle, because a hardcoded
+  // `Brightness.light` left white status-bar icons invisible on the light theme.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // Every step below is individually guarded, and runApp() ALWAYS runs.
   //
@@ -131,13 +132,30 @@ class _AppRootState extends ConsumerState<_AppRoot> {
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
+    // Was hardcoded to ThemeMode.dark, which made the light theme unreachable.
+    final mode = ref.watch(themeModeProvider);
+
     return MaterialApp.router(
       title: 'RecallDay',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
-      darkTheme: AppTheme.dark(),
+      themeMode: mode,
       theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
       routerConfig: router,
+      builder: (context, child) {
+        // Pin text scaling to a sane range. The layouts are tight enough that
+        // a 2x system font scale breaks rows outright.
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: mq.textScaler.clamp(
+              minScaleFactor: 0.9,
+              maxScaleFactor: 1.3,
+            ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
     );
   }
 }

@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/theme/app_tokens.dart';
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/storage_service.dart';
 import '../providers/providers.dart';
+import '../providers/theme_provider.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/delete_confirm.dart';
 
@@ -49,56 +51,92 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: SafeArea(
-        child: ListView(children: [
-          ..._notificationSection(),
-          ..._backupSection(),
-          ..._dataSection(),
-          ..._aboutSection(),
-          const SizedBox(height: 24),
-        ]),
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
+          children: [
+            _appearance(),
+            _notifications(),
+            _backup(),
+            _data(),
+            _about(),
+          ],
+        ),
       ),
     );
   }
 
-  // ------------------------------------------------------------ notifications
+  // ------------------------------------------------------------- appearance
 
-  List<Widget> _notificationSection() {
-    final p = _perms;
-    return [
-      _Section(title: 'Notifications', children: [
-        ListTile(
-          leading: Icon(
-            p == null
-                ? Icons.hourglass_empty
-                : p.canNotify
-                    ? Icons.check_circle_outline
-                    : Icons.error_outline,
-            color: p == null
-                ? null
-                : p.canNotify
-                    ? const Color(0xFF8FD9C0)
-                    : Theme.of(context).colorScheme.error,
+  Widget _appearance() {
+    final mode = ref.watch(themeModeProvider);
+    return _Group(
+      title: 'Appearance',
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.gutter),
+          child: SegmentedButton<ThemeMode>(
+            segments: const [
+              ButtonSegment(
+                value: ThemeMode.light,
+                icon: Icon(Icons.light_mode_outlined, size: 18),
+                label: Text('Light'),
+              ),
+              ButtonSegment(
+                value: ThemeMode.dark,
+                icon: Icon(Icons.dark_mode_outlined, size: 18),
+                label: Text('Dark'),
+              ),
+              ButtonSegment(
+                value: ThemeMode.system,
+                icon: Icon(Icons.brightness_auto_outlined, size: 18),
+                label: Text('Auto'),
+              ),
+            ],
+            selected: {mode},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) {
+              HapticFeedback.selectionClick();
+              ref.read(themeModeProvider.notifier).set(s.first);
+            },
           ),
-          title: Text(p == null
-              ? 'Checking permissions…'
-              : p.canNotify
-                  ? 'Reminders are allowed'
-                  : 'Reminders are blocked'),
-          subtitle: Text(
-            p == null
-                ? ''
-                : !p.canNotify
-                    ? 'Android is not letting RecallDay post notifications. '
-                        'Tap "Grant permissions" below.'
-                    : p.exactAlarmGranted
-                        ? 'Exact alarms allowed — reminders fire on time.'
-                        : 'Exact alarms are off, so Android may batch reminders '
-                            'and deliver them a few minutes late. Turn on '
-                            '"Alarms & reminders" for RecallDay to fix that.',
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5),
-          ),
-          isThreeLine: p != null,
         ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------- notifications
+
+  Widget _notifications() {
+    final p = _perms;
+    final cs = Theme.of(context).colorScheme;
+    final light = Theme.of(context).brightness == Brightness.light;
+    final success =
+        light ? StatusColors.successLight : StatusColors.successDark;
+
+    return _Group(
+      title: 'Reminders',
+      children: [
+        if (p != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.gutter,
+              0,
+              AppSpacing.gutter,
+              AppSpacing.md,
+            ),
+            child: _StatusBanner(
+              ok: p.canNotify,
+              color: p.canNotify ? success : cs.error,
+              title: p.canNotify ? 'Reminders are on' : 'Reminders are blocked',
+              message: !p.canNotify
+                  ? 'Android is not letting RecallDay post notifications. '
+                      'Tap "Grant permissions" below.'
+                  : p.exactAlarmGranted
+                      ? 'Exact alarms allowed — reminders fire on time.'
+                      : 'Exact alarms are off, so Android may deliver reminders '
+                          'a few minutes late. Turn on "Alarms & reminders" to fix.',
+            ),
+          ),
         ListTile(
           leading: const Icon(Icons.notifications_active_outlined),
           title: const Text('Grant permissions'),
@@ -108,10 +146,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               : () async {
                   await NotificationService.instance.requestPermissions();
                   NotificationService.instance.invalidatePermissionCache();
-                  // Re-arm with the (possibly upgraded) exact-alarm capability.
-                  await ref
-                      .read(topicCommandsProvider)
-                      .reArmAllNotifications();
+                  await ref.read(topicCommandsProvider).reArmAllNotifications();
                   await _refreshStatus();
                   _toast('Permissions refreshed');
                 },
@@ -119,88 +154,86 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ListTile(
           leading: const Icon(Icons.send_outlined),
           title: const Text('Send a test reminder'),
-          subtitle: const Text('Check the notification appears with sound'),
+          subtitle: const Text('Check it appears with sound'),
           onTap: _busy
               ? null
               : () async {
-                  final ok = await NotificationService.instance
-                      .showTestNotification();
+                  final ok =
+                      await NotificationService.instance.showTestNotification();
                   _toast(ok
-                      ? 'Test reminder sent — check your notification bar'
-                      : 'Android refused the notification. Grant permissions first.');
+                      ? 'Sent — check your notification bar'
+                      : 'Android refused it. Grant permissions first.');
                 },
         ),
         ListTile(
           leading: const Icon(Icons.alarm_on_outlined),
           title: const Text('Re-arm all reminders'),
-          subtitle: const Text('Reschedule alarms for every active topic'),
+          subtitle: const Text('Reschedule every active topic'),
           onTap: _busy
               ? null
               : () async {
-                  await ref
-                      .read(topicCommandsProvider)
-                      .reArmAllNotifications();
+                  await ref.read(topicCommandsProvider).reArmAllNotifications();
                   _toast('Reminders rescheduled');
                 },
         ),
         const ListTile(
           leading: Icon(Icons.battery_alert_outlined),
-          title: Text('Battery optimization'),
+          title: Text('Battery optimisation'),
           subtitle: Text(
-            'For reliable reminders on Xiaomi/OnePlus/Samsung, exempt RecallDay '
-            'from battery optimization in Android Settings → Apps → RecallDay → Battery.',
-            style: TextStyle(color: AppTheme.textMuted, fontSize: 12.5),
+            'On Xiaomi, OnePlus and Samsung, exempt RecallDay from battery '
+            'optimisation in Android Settings → Apps → RecallDay → Battery.',
           ),
         ),
-      ]),
-    ];
+      ],
+    );
   }
 
-  // ------------------------------------------------------------------ backup
+  // ----------------------------------------------------------------- backup
 
-  List<Widget> _backupSection() {
+  Widget _backup() {
     final loc = _location;
     final durable = loc?.survivesUninstall ?? false;
-    return [
-      _Section(title: 'Backup & restore', children: [
-        ListTile(
-          leading: Icon(
-            durable ? Icons.verified_outlined : Icons.warning_amber_outlined,
-            color: durable
-                ? const Color(0xFF8FD9C0)
-                : const Color(0xFFE0A878),
-          ),
-          title: Text(loc == null
-              ? 'Checking storage…'
-              : durable
+    final light = Theme.of(context).brightness == Brightness.light;
+    final success =
+        light ? StatusColors.successLight : StatusColors.successDark;
+    final warning =
+        light ? StatusColors.warningLight : StatusColors.warningDark;
+
+    return _Group(
+      title: 'Backup',
+      children: [
+        if (loc != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.gutter,
+              0,
+              AppSpacing.gutter,
+              AppSpacing.md,
+            ),
+            child: _StatusBanner(
+              ok: durable,
+              color: durable ? success : warning,
+              title: durable
                   ? 'Backups survive uninstall'
-                  : 'Backups will NOT survive uninstall'),
-          subtitle: Text(
-            loc == null
-                ? ''
-                : durable
-                    ? 'Saved to ${loc.label}. Reinstalling RecallDay restores '
-                        'this automatically.'
-                    : 'Android is only letting RecallDay write to its own '
-                        'sandbox (${loc.label}), which is deleted on uninstall. '
-                        'Tap "Allow shared storage" to fix this.',
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5),
+                  : 'Backups will not survive uninstall',
+              message: durable
+                  ? 'Saved to ${loc.label}. Reinstalling restores this '
+                      'automatically.'
+                  : 'Android is only letting RecallDay write to its own sandbox '
+                      '(${loc.label}), which is deleted on uninstall.',
+            ),
           ),
-          isThreeLine: loc != null,
-        ),
         if (!durable)
           ListTile(
             leading: const Icon(Icons.folder_open_outlined),
             title: const Text('Allow shared storage'),
-            subtitle: const Text(
-                'Needed to write a backup outside the app sandbox'),
+            subtitle: const Text('Needed to back up outside the app sandbox'),
             onTap: _busy
                 ? null
                 : () async {
                     await BackupService.instance.requestStoragePermission();
                     await _refreshStatus();
                     if (_location?.survivesUninstall == true) {
-                      // Immediately lay down a durable copy in the new location.
                       await BackupService.instance.flush();
                       _toast('Shared storage enabled — backup written');
                     } else {
@@ -212,7 +245,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ListTile(
           leading: const Icon(Icons.backup_outlined),
           title: const Text('Back up now'),
-          subtitle: const Text('Write a JSON snapshot of everything'),
+          subtitle: const Text('Write a snapshot of everything'),
           onTap: _busy
               ? null
               : () async {
@@ -233,16 +266,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ),
         ListTile(
           leading: const Icon(Icons.copy_all_outlined),
-          title: const Text('Copy JSON to clipboard'),
-          subtitle: const Text('Paste into a note or email as a second copy'),
+          title: const Text('Copy backup as text'),
+          subtitle: const Text('Paste into a note as a second copy'),
           onTap: () async {
             await Clipboard.setData(
-                ClipboardData(text: BackupService.instance.buildSnapshotJson()));
+              ClipboardData(text: BackupService.instance.buildSnapshotJson()),
+            );
             _toast('Copied to clipboard');
           },
         ),
-      ]),
-    ];
+      ],
+    );
   }
 
   Future<void> _restore() async {
@@ -259,6 +293,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       message: 'This merges the snapshot at ${file.path} into your current '
           'data. Topics with the same id are overwritten.',
       confirmLabel: 'Restore',
+      destructive: false,
     );
     if (!ok || !mounted) return;
 
@@ -275,11 +310,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
-  // -------------------------------------------------------------------- data
+  // ------------------------------------------------------------------- data
 
-  List<Widget> _dataSection() {
-    return [
-      _Section(title: 'Data', children: [
+  Widget _data() {
+    final cs = Theme.of(context).colorScheme;
+    return _Group(
+      title: 'Data',
+      children: [
         ListTile(
           leading: const Icon(Icons.cleaning_services_outlined),
           title: const Text('Compact storage'),
@@ -290,15 +327,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           },
         ),
         ListTile(
-          leading: const Icon(Icons.delete_forever_outlined),
-          title: Text('Reset all data',
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          leading: Icon(Icons.delete_forever_outlined, color: cs.error),
+          title: Text('Reset all data', style: TextStyle(color: cs.error)),
+          subtitle: const Text('Your backup file is left untouched'),
           onTap: () async {
             final ok = await confirmDelete(
               context,
               title: 'Reset all data?',
-              message: 'This deletes all subjects, topics, and review history '
-                  'on this device. Your backup file is left untouched.',
+              message: 'This deletes every subject, topic and review on this '
+                  'device. Your backup file is not touched.',
               confirmLabel: 'Reset',
             );
             if (!ok) return;
@@ -309,51 +346,120 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             _toast('All data cleared');
           },
         ),
-      ]),
-    ];
+      ],
+    );
   }
 
-  List<Widget> _aboutSection() {
-    return [
-      _Section(title: 'About', children: const [
+  Widget _about() {
+    final tt = Theme.of(context).textTheme;
+    return _Group(
+      title: 'About',
+      children: [
         Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
-          child: Center(child: AppLogo(size: 132, elevated: false)),
-        ),
-        ListTile(
-          leading: Icon(Icons.info_outline),
-          title: Text('RecallDay'),
-          subtitle: Text('Remember today. Master tomorrow.'),
-        ),
-        ListTile(
-          leading: Icon(Icons.shield_outlined),
-          title: Text('Your data stays on this device'),
-          subtitle: Text(
-            'No accounts. No cloud sync. No analytics. Backups are written to '
-            'your own phone storage — nothing is uploaded anywhere.',
-            style: TextStyle(color: AppTheme.textMuted, fontSize: 12.5),
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+          child: Column(
+            children: [
+              const AppLogo(size: 116, elevated: false),
+              const SizedBox(height: AppSpacing.lg),
+              Text('Remember today. Master tomorrow.', style: tt.labelSmall),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Everything stays on this device — no accounts, no analytics.',
+                textAlign: TextAlign.center,
+                style: tt.labelSmall,
+              ),
+            ],
           ),
         ),
-      ]),
-    ];
+      ],
+    );
   }
 }
 
-class _Section extends StatelessWidget {
+/// A tinted status strip used by the reminder and backup sections.
+class _StatusBanner extends StatelessWidget {
+  final bool ok;
+  final Color color;
   final String title;
-  final List<Widget> children;
-  const _Section({required this.title, required this.children});
+  final String message;
+
+  const _StatusBanner({
+    required this.ok,
+    required this.color,
+    required this.title,
+    required this.message,
+  });
+
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
-        child: Text(title.toUpperCase(),
-            style: const TextStyle(
-                fontSize: 11.5, fontWeight: FontWeight.w700,
-                color: AppTheme.textMuted, letterSpacing: 0.6)),
+    final tt = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
       ),
-      ...children,
-    ]);
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            ok
+                ? Icons.check_circle_rounded
+                : Icons.error_outline_rounded,
+            color: color,
+            size: 19,
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: tt.labelMedium?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(message, style: tt.labelSmall?.copyWith(height: 1.45)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Group extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+  const _Group({required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.gutter,
+            AppSpacing.xxl,
+            AppSpacing.gutter,
+            AppSpacing.md,
+          ),
+          child: Text(
+            title.toUpperCase(),
+            style: tt.labelSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.7,
+            ),
+          ),
+        ),
+        ...children,
+      ],
+    );
   }
 }

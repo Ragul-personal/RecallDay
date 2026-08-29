@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/app_theme.dart';
+
 /// The RecallDay logo, presented on the light card the artwork was drawn for.
 ///
 /// `assets/logo.png` has an opaque near-white background (#FDFFFE) baked in —
@@ -17,7 +19,7 @@ class AppLogo extends StatelessWidget {
   const AppLogo({super.key, this.size = 160, this.elevated = true});
 
   /// The logo artwork's own background colour.
-  static const Color canvas = Color(0xFFFDFFFE);
+  static const Color canvas = BrandColors.canvas;
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +50,7 @@ class AppLogo extends StatelessWidget {
           errorBuilder: (_, __, ___) => Icon(
             Icons.replay_circle_filled_rounded,
             size: size * 0.5,
-            color: const Color(0xFF6C4BF6),
+            color: BrandColors.violet,
           ),
         ),
       ),

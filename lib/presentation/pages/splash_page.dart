@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../core/theme/app_tokens.dart';
 
 import '../../services/backup_service.dart';
 import '../../services/notification_service.dart';
@@ -96,6 +99,7 @@ class _SplashPageState extends ConsumerState<SplashPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
     return Scaffold(
       body: Center(
         child: Column(
@@ -103,21 +107,33 @@ class _SplashPageState extends ConsumerState<SplashPage> {
           children: [
             // The artwork already carries the wordmark and tagline, so there's
             // no separate "RecallDay" text here — that would just duplicate it.
-            const AppLogo(size: 200),
-            const SizedBox(height: 28),
+            const AppLogo(size: 176)
+                .animate()
+                .fadeIn(duration: AppMotion.slow, curve: AppMotion.curve)
+                .scale(
+                  begin: const Offset(0.94, 0.94),
+                  end: const Offset(1, 1),
+                  duration: AppMotion.slow,
+                  curve: AppMotion.curve,
+                ),
+            const SizedBox(height: AppSpacing.xxl),
             SizedBox(
-              width: 22,
-              height: 22,
+              width: 20,
+              height: 20,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: cs.primary.withValues(alpha: 0.7),
+                color: cs.primary.withValues(alpha: 0.6),
               ),
             ),
-            const SizedBox(height: 16),
-            Text(
-              _status ?? 'Remember today. Master tomorrow.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: cs.onSurface.withValues(alpha: 0.6)),
+            const SizedBox(height: AppSpacing.lg),
+            AnimatedSwitcher(
+              duration: AppMotion.base,
+              child: Text(
+                _status ?? 'Remember today. Master tomorrow.',
+                key: ValueKey(_status),
+                textAlign: TextAlign.center,
+                style: tt.labelSmall,
+              ),
             ),
           ],
         ),

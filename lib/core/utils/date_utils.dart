@@ -17,4 +17,8 @@ class DateLabels {
   static String time(DateTime when) => DateFormat.jm().format(when);
 
   static String monthYear(DateTime when) => DateFormat.yMMMM().format(when);
+
+  /// "Monday, 29 August" — the Today screen's subtitle under the greeting.
+  static String fullDate(DateTime when) =>
+      DateFormat('EEEE, d MMMM').format(when);
 }
