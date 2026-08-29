@@ -23,7 +23,11 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.recallday.app"
-    compileSdk = 35
+    // The attachment plugins (file_picker, webview_flutter, video_player) ship
+    // AARs compiled against SDK 36, and AAR metadata checks refuse to link
+    // against an older compileSdk. Safe with AGP 8.11: compileSdk only affects
+    // what we build against, not which devices can install (that's minSdk).
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
