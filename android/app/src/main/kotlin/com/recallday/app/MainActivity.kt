@@ -33,6 +33,10 @@ class MainActivity : FlutterActivity() {
     private val pickFolderRequest = 9001
     private var pendingPick: MethodChannel.Result? = null
 
+    /// Whether the folder being picked should become the app's permanent
+    /// storage location, or is a one-off read for an import.
+    private var pendingPersist: Boolean = true
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -43,7 +47,10 @@ class MainActivity : FlutterActivity() {
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
-                "pickFolder" -> pickFolder(result)
+                "pickFolder" -> pickFolder(
+                    result,
+                    call.argument<Boolean>("persist") ?: true,
+                )
                 "hasAccess" -> result.success(hasAccess(call.argument<String>("uri")))
                 "folderName" -> result.success(folderName(call.argument<String>("uri")))
                 "writeFile" -> result.success(
@@ -95,6 +102,9 @@ class MainActivity : FlutterActivity() {
                 "listAt" -> result.success(
                     listAt(call.argument<String>("uri"), call.argument<String>("path"))
                 )
+                "deleteDirAt" -> result.success(
+                    deleteDirAt(call.argument<String>("uri"), call.argument<String>("path"))
+                )
                 "release" -> result.success(release(call.argument<String>("uri")))
                 else -> result.notImplemented()
             }
@@ -105,12 +115,20 @@ class MainActivity : FlutterActivity() {
 
     // ------------------------------------------------------------- folder pick
 
-    private fun pickFolder(result: MethodChannel.Result) {
+    /**
+     * [persist] false is used when importing from another folder: we need to
+     * read it once, but it must NOT replace the app's storage location, and
+     * there is no reason to hold a permanent grant on a folder the user only
+     * pointed at in passing. The temporary grant lasts as long as the process,
+     * which is far longer than the copy takes.
+     */
+    private fun pickFolder(result: MethodChannel.Result, persist: Boolean) {
         if (pendingPick != null) {
             result.error("busy", "A folder picker is already open.", null)
             return
         }
         pendingPick = result
+        pendingPersist = persist
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
@@ -138,16 +156,23 @@ class MainActivity : FlutterActivity() {
         }
 
         // This is the line that makes the choice durable. Without it the grant
-        // dies with the activity and the next launch has no access.
-        try {
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-        } catch (e: SecurityException) {
-            pending?.error("saf_error", "Could not keep access to that folder.", null)
-            return
+        // dies with the activity and the next launch has no access. Skipped for
+        // a one-off import read, which only needs access for this session.
+        if (pendingPersist) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            } catch (e: SecurityException) {
+                pending?.error(
+                    "saf_error",
+                    "Could not keep access to that folder.",
+                    null,
+                )
+                return
+            }
         }
         pending?.success(uri.toString())
     }
@@ -313,6 +338,30 @@ class MainActivity : FlutterActivity() {
             out.outputStream().use { sink -> input.copyTo(sink, DEFAULT_BUFFER_SIZE) }
         }
         return true
+    }
+
+    /**
+     * Delete a directory and everything under it.
+     *
+     * Children are removed explicitly before the directory itself rather than
+     * relying on DocumentFile.delete() to cascade — whether a provider deletes
+     * a non-empty directory is not guaranteed, and a half-deleted tree is
+     * worse than none.
+     */
+    private fun deleteTree(doc: DocumentFile): Boolean {
+        if (doc.isDirectory) {
+            for (child in doc.listFiles()) deleteTree(child)
+        }
+        return doc.delete()
+    }
+
+    private fun deleteDirAt(uriString: String?, path: String?): Boolean {
+        val tree = treeOf(uriString) ?: return false
+        val parts = (path ?: "").split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return false
+        // Absent is not a failure: nothing to delete is the desired end state.
+        val dir = resolveDir(tree, parts, create = false) ?: return false
+        return deleteTree(dir)
     }
 
     private fun deleteAt(uriString: String?, path: String?): Boolean {

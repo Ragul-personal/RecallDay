@@ -13,6 +13,7 @@ import '../providers/providers.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/delete_confirm.dart';
+import '../widgets/import_source.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -338,7 +339,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           leading: const Icon(Icons.file_open_outlined),
           title: const Text('Import a backup'),
           subtitle: const Text(
-            'Restore everything from a backup file you exported',
+            'Merge a backup into your current data, attachments included',
           ),
           onTap: _busy ? null : _import,
         ),
@@ -374,9 +375,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
 
   Future<void> _import() async {
+    final source = await chooseImportSource(context);
+    if (source == null || !mounted) return;
+
     setState(() => _busy = true);
     try {
-      final summary = await BackupService.instance.importArchive(merge: true);
+      final summary = source == ImportSource.folder
+          ? await BackupService.instance.importFromFolder(merge: true)
+          : await BackupService.instance.importArchive(merge: true);
       await ref.read(topicCommandsProvider).reArmAllNotifications();
       await _refreshStatus();
       if (!mounted) return;
@@ -385,6 +391,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           'Nothing restored',
           'That file was read but contained no subjects or topics.',
         );
+      } else if (summary.files == 0 && source == ImportSource.file) {
+        // A loose data file carries records but no attachments, and the picker
+        // granted no way to reach them. Say so rather than leaving the user to
+        // discover it when a video won't open.
+        _toast('Restored $summary — attachments not included');
       } else {
         _toast('Restored $summary');
       }

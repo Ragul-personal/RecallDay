@@ -200,9 +200,9 @@ class BackupService {
 
   Future<void> removeTopicFilesFromFolder(String topicId) async {
     if (!await SafService.instance.hasAccess()) return;
-    for (final rel in await SafService.instance.listAt('$_folderFiles/$topicId')) {
-      await SafService.instance.deleteAt('$_folderFiles/$topicId/$rel');
-    }
+    // The whole directory, not its files one by one — otherwise the topic's
+    // folder survives as an empty shell.
+    await SafService.instance.deleteDirAt('$_folderFiles/$topicId');
   }
 
   /// Push across any attachment the folder doesn't have yet.
@@ -440,9 +440,9 @@ class BackupService {
   Future<void> clearFolderFiles() async {
     final saf = SafService.instance;
     if (!await saf.hasAccess()) return;
-    for (final rel in await saf.listAt(_folderFiles)) {
-      await saf.deleteAt('$_folderFiles/$rel');
-    }
+    // Removes the per-topic subfolders too. It is recreated on demand: copyIn
+    // resolves its destination path with create:true.
+    await saf.deleteDirAt(_folderFiles);
   }
 
   /// Whether a snapshot actually contains something worth restoring.
@@ -582,10 +582,82 @@ class BackupService {
     }
 
     if (f.name.toLowerCase().endsWith('.zip')) {
-      return restoreFromArchivePath(path, merge: merge);
+      final summary = await restoreFromArchivePath(path, merge: merge);
+      // Push the imported records and files into the active folder.
+      await writeAutoBackup();
+      await syncMissingAttachments();
+      return summary;
     }
-    // A bare .json snapshot is small enough to read whole.
-    return restoreFromJson(await File(path).readAsString(), merge: merge);
+
+    // A bare .json snapshot is small enough to read whole. Its attachments are
+    // unreachable — the picker granted this one file, not its folder — so
+    // paths are still rehomed in case the files are already here from an
+    // earlier import, and the caller is told nothing came across.
+    final summary =
+        await restoreFromJson(await File(path).readAsString(), merge: merge);
+    await _rehomeAllAttachments();
+    await writeAutoBackup();
+    return summary.withFiles(0);
+  }
+
+  /// Import a backup that lives in another folder, integrating it completely
+  /// into the active one.
+  ///
+  /// This exists because picking a loose `data.json` through the file picker
+  /// grants access to that ONE file. SAF gives no access to its siblings, so
+  /// the attachments sitting next to it were unreachable — the records came
+  /// across and pointed at files from the install that wrote them, which do
+  /// not exist here, so nothing opened. Picking the folder grants a tree we
+  /// can actually traverse.
+  ///
+  /// Nothing in the active folder is removed: records merge by id, and an
+  /// attachment already present is left alone rather than overwritten.
+  Future<RestoreSummary> importFromFolder({bool merge = true}) async {
+    final saf = SafService.instance;
+    final source = await saf.pickFolderForImport();
+    if (source == null) throw const BackupCancelled();
+
+    // Both layouts are accepted: an extracted export (data.json) and a copied
+    // RecallDay folder (recallday-backup.json).
+    Uint8List? json;
+    for (final name in const [_archiveData, _folderData]) {
+      json = await saf.readFile(name, fromUri: source);
+      if (json != null) break;
+    }
+    if (json == null) {
+      throw const FormatException(
+        'No RecallDay backup was found in that folder. Pick the folder that '
+        'holds data.json or recallday-backup.json.',
+      );
+    }
+
+    final summary = await restoreFromJson(utf8.decode(json), merge: merge);
+
+    // Attachments live under attachments/ in an extracted export and under
+    // RecallDay-files/ in a copied folder; take whichever is there.
+    final docs = await getApplicationDocumentsDirectory();
+    var files = 0;
+    for (final root in const [_archiveAttachments, _folderFiles]) {
+      for (final rel in await saf.listAt(root, fromUri: source)) {
+        final dest = File('${docs.path}/$_archiveAttachments/$rel');
+        // Never clobber a file already here — the local copy is the one the
+        // current install's records point at.
+        if (await dest.exists()) continue;
+        await dest.parent.create(recursive: true);
+        if (await saf.copyOut('$root/$rel', dest.path, fromUri: source)) {
+          files++;
+        }
+      }
+    }
+
+    // Rewrite every attachment path for this install, then push the merged
+    // result — records and files — into the active folder, so the outcome is
+    // indistinguishable from data created here in the first place.
+    await _rehomeAllAttachments();
+    await writeAutoBackup();
+    await syncMissingAttachments();
+
+    return summary.withFiles(files);
   }
 
   /// Restore a `.zip` export, streamed from disk.

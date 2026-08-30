@@ -12,6 +12,7 @@ import '../../services/storage_service.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_logo.dart';
+import '../widgets/import_source.dart';
 
 /// First-run setup.
 ///
@@ -96,15 +97,20 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
   }
 
   Future<void> _importBackup() async {
+    final source = await chooseImportSource(context);
+    if (source == null || !mounted) return;
+
     setState(() => _busy = true);
     try {
-      final summary = await BackupService.instance.importArchive(merge: true);
+      final summary = source == ImportSource.folder
+          ? await BackupService.instance.importFromFolder(merge: true)
+          : await BackupService.instance.importArchive(merge: true);
       if (!mounted) return;
       if (summary.isEmpty) {
         await _details(
           'Nothing was restored',
-          'That file was read but held no subjects or topics. Please pick your '
-          'RecallDay backup file.',
+          'That backup was read but held no subjects or topics. Pick the '
+          'file you exported, or the folder you unpacked it into.',
         );
       } else {
         setState(() => _restoredSummary = summary.toString());
@@ -112,7 +118,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     } on BackupCancelled {
       // Picker dismissed; nothing to report.
     } catch (e) {
-      if (mounted) await _details('That file could not be read', '$e');
+      if (mounted) await _details('That backup could not be read', '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -255,9 +261,11 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     return _StepScaffold(
       key: const ValueKey('existingImport'),
       icon: Icons.file_open_outlined,
-      title: 'Select your backup file',
-      body: 'Choose the RecallDay backup file you exported — it holds your '
-          'subjects, topics, review history and attachments.\n\n'
+      title: 'Bring your data back',
+      body: 'Point RecallDay at the backup you saved — either the file you '
+          'exported, or the folder you unpacked it into.\n\n'
+          'Choosing the folder also brings your attachments across; a lone '
+          'data file can only carry the records.\n\n'
           'It is only read, never changed. Your original file stays exactly '
           'where it is.',
       onBack: () => _go(_Step.welcome),
@@ -277,14 +285,14 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      done ? 'Backup loaded' : 'Select backup file',
+                      done ? 'Backup loaded' : 'Select your backup',
                       style: tt.titleSmall,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       done
                           ? _restoredSummary!
-                          : 'Required — tap to choose your backup file',
+                          : 'Required — tap to choose a file or folder',
                       style: tt.labelSmall,
                     ),
                   ],

@@ -48,10 +48,11 @@ class SafService {
     }
   }
 
-  /// Ask the user to choose a folder. Returns its URI, or null if cancelled.
+  /// Ask the user to choose the app's storage folder. Remembered for good.
   Future<String?> pickFolder() async {
     try {
-      final uri = await _channel.invokeMethod<String>('pickFolder');
+      final uri = await _channel
+          .invokeMethod<String>('pickFolder', {'persist': true});
       if (uri != null) await _remember(uri);
       return uri;
     } on PlatformException catch (e) {
@@ -59,6 +60,24 @@ class SafService {
       return null;
     } on MissingPluginException {
       // Non-Android, or an engine without the channel attached.
+      return null;
+    }
+  }
+
+  /// Ask the user to point at a folder to read once — importing a backup that
+  /// was extracted somewhere else.
+  ///
+  /// Deliberately does NOT become the storage location and is not remembered.
+  /// Reusing [pickFolder] here would silently move the app's data folder to
+  /// wherever the user happened to browse to.
+  Future<String?> pickFolderForImport() async {
+    try {
+      return await _channel
+          .invokeMethod<String>('pickFolder', {'persist': false});
+    } on PlatformException catch (e) {
+      debugPrint('[saf] pickFolderForImport failed: ${e.message}');
+      return null;
+    } on MissingPluginException {
       return null;
     }
   }
@@ -113,8 +132,8 @@ class SafService {
   }
 
   /// Read a file from the chosen folder, or null if it isn't there.
-  Future<Uint8List?> readFile(String name) async {
-    final uri = savedUri;
+  Future<Uint8List?> readFile(String name, {String? fromUri}) async {
+    final uri = fromUri ?? savedUri;
     if (uri == null) return null;
     try {
       return await _channel.invokeMethod<Uint8List>('readFile', {
@@ -128,8 +147,8 @@ class SafService {
   }
 
   /// Whether [name] exists in the chosen folder.
-  Future<bool> hasFile(String name) async {
-    final uri = savedUri;
+  Future<bool> hasFile(String name, {String? fromUri}) async {
+    final uri = fromUri ?? savedUri;
     if (uri == null) return false;
     try {
       return await _channel
@@ -199,8 +218,8 @@ class SafService {
   }
 
   /// Stream a file out of the folder to a local path.
-  Future<bool> copyOut(String path, String destPath) async {
-    final uri = savedUri;
+  Future<bool> copyOut(String path, String destPath, {String? fromUri}) async {
+    final uri = fromUri ?? savedUri;
     if (uri == null) return false;
     try {
       return await _channel.invokeMethod<bool>('copyOut', {
@@ -227,9 +246,27 @@ class SafService {
     }
   }
 
-  /// Relative paths of every file under [path].
-  Future<List<String>> listAt(String path) async {
+  /// Delete a directory in the folder and everything inside it.
+  ///
+  /// [listAt] returns files only, so deleting per-entry left the directories
+  /// themselves behind — a reset emptied every attachment folder but kept the
+  /// folders, one per topic that ever existed.
+  Future<bool> deleteDirAt(String path) async {
     final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('deleteDirAt', {'uri': uri, 'path': path}) ??
+          false;
+    } catch (e) {
+      debugPrint('[saf] deleteDirAt "$path" failed: $e');
+      return false;
+    }
+  }
+
+  /// Relative paths of every file under [path].
+  Future<List<String>> listAt(String path, {String? fromUri}) async {
+    final uri = fromUri ?? savedUri;
     if (uri == null) return const [];
     try {
       final r = await _channel
