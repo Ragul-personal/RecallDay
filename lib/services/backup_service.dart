@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -400,8 +401,6 @@ class BackupService {
 
   /// Write now and report. Used on app background and by Settings.
   Future<BackupResult> flush() async {
-    _folderDebounce?.cancel();
-    _folderDebounce = null;
     while (_writing) {
       await Future<void>.delayed(const Duration(milliseconds: 40));
     }
