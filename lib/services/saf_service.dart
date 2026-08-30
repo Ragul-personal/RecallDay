@@ -171,6 +171,93 @@ class SafService {
     }
   }
 
+  /// Stream a local file into the folder at [path] (e.g. `files/<id>/clip.mp4`).
+  ///
+  /// The bytes go straight from disk to disk in the platform layer. They must
+  /// never travel as a method-channel argument: a 50 MB video is copied once
+  /// on the Dart side and again on the platform side, which on its own was
+  /// enough to get the process killed for exceeding its heap.
+  Future<bool> copyIn(
+    String path,
+    String sourcePath, {
+    String mime = 'application/octet-stream',
+  }) async {
+    final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel.invokeMethod<bool>('copyIn', {
+            'uri': uri,
+            'path': path,
+            'src': sourcePath,
+            'mime': mime,
+          }) ??
+          false;
+    } catch (e) {
+      debugPrint('[saf] copyIn "$path" failed: $e');
+      return false;
+    }
+  }
+
+  /// Stream a file out of the folder to a local path.
+  Future<bool> copyOut(String path, String destPath, {String? fromUri}) async {
+    final uri = fromUri ?? savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel.invokeMethod<bool>('copyOut', {
+            'uri': uri,
+            'path': path,
+            'dest': destPath,
+          }) ??
+          false;
+    } catch (e) {
+      debugPrint('[saf] copyOut "$path" failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteAt(String path) async {
+    final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('deleteAt', {'uri': uri, 'path': path}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Delete a directory in the folder and everything inside it.
+  ///
+  /// [listAt] returns files only, so deleting per-entry left the directories
+  /// themselves behind — a reset emptied every attachment folder but kept the
+  /// folders, one per topic that ever existed.
+  Future<bool> deleteDirAt(String path) async {
+    final uri = savedUri;
+    if (uri == null) return false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('deleteDirAt', {'uri': uri, 'path': path}) ??
+          false;
+    } catch (e) {
+      debugPrint('[saf] deleteDirAt "$path" failed: $e');
+      return false;
+    }
+  }
+
+  /// Relative paths of every file under [path].
+  Future<List<String>> listAt(String path, {String? fromUri}) async {
+    final uri = fromUri ?? savedUri;
+    if (uri == null) return const [];
+    try {
+      final r = await _channel
+          .invokeMethod<List<Object?>>('listAt', {'uri': uri, 'path': path});
+      return r?.cast<String>() ?? const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Confirm the folder really accepts writes, without touching any real file.
   ///
   /// Setup used to prove this by writing the actual backup, which on a fresh

@@ -9,6 +9,10 @@ import '../../domain/repositories/subject_repository.dart';
 import '../../domain/repositories/topic_repository.dart';
 import '../../domain/usecases/spaced_repetition_engine.dart';
 
+/// Re-exported so a screen can `import providers.dart` and reach both the
+/// derived state below and the commands that change it.
+export 'topic_commands.dart';
+
 // Everything here is READ-ONLY: singletons, repositories, and values derived
 // from them. All writes live in TopicCommands (topic_commands.dart), which is
 // re-exported below so a screen needs a single import for both.
@@ -131,7 +135,3 @@ final recentActivityProvider = Provider<List<int>>((ref) {
     (i) => counts[today.subtract(Duration(days: days - 1 - i))] ?? 0,
   );
 });
-
-/// Re-exported so widgets can `import providers.dart` and reach both the
-/// derived state above and the commands that change it.
-export 'topic_commands.dart';
