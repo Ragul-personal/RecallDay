@@ -35,7 +35,6 @@ class AnalyticsPage extends ConsumerWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final light = theme.brightness == Brightness.light;
 
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
@@ -44,8 +43,8 @@ class AnalyticsPage extends ConsumerWidget {
     final best = ref.watch(bestStreakProvider);
     final activity = ref.watch(recentActivityProvider);
 
-    final success = light ? StatusColors.successLight : StatusColors.successDark;
-    final warning = light ? StatusColors.warningLight : StatusColors.warningDark;
+    final success = StatusColors.success(context);
+    final warning = StatusColors.warning(context);
 
     if (topics.isEmpty && reviews.isEmpty) {
       return const CustomScrollView(

@@ -253,9 +253,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
   Widget _existingImport() {
     final tt = Theme.of(context).textTheme;
-    final light = Theme.of(context).brightness == Brightness.light;
-    final success =
-        light ? StatusColors.successLight : StatusColors.successDark;
+    final success = StatusColors.success(context);
     final done = _restoredSummary != null;
 
     return _StepScaffold(
@@ -447,9 +445,7 @@ class _FolderTile extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final success = theme.brightness == Brightness.light
-        ? StatusColors.successLight
-        : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     return AppCard(
       onTap: busy ? null : onTap,

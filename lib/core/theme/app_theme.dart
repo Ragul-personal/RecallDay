@@ -34,24 +34,34 @@ class BrandColors {
 
 /// Semantic status colours, tuned per brightness so both themes hit similar
 /// contrast rather than reusing one set that only works on dark.
+///
+/// Always reached through [success] / [warning] rather than the raw constants:
+/// the `light ? xLight : xDark` ternary was written out at eighteen call sites
+/// across nine files, which is eighteen chances to pick the wrong one.
+///
+/// There is no danger/error entry here on purpose — that comes from
+/// `Theme.of(context).colorScheme.error`, which the theme already defines per
+/// brightness.
 class StatusColors {
   StatusColors._();
 
-  static const Color successLight = Color(0xFF12805C);
-  static const Color successDark = Color(0xFF5FD3AB);
+  static const Color _successLight = Color(0xFF12805C);
+  static const Color _successDark = Color(0xFF5FD3AB);
 
-  static const Color warningLight = Color(0xFFB25A16);
-  static const Color warningDark = Color(0xFFE8A366);
+  static const Color _warningLight = Color(0xFFB25A16);
+  static const Color _warningDark = Color(0xFFE8A366);
 
-  static const Color dangerLight = Color(0xFFC42B3E);
-  static const Color dangerDark = Color(0xFFFF8A93);
+  /// Done, mastered, on track.
+  static Color success(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.light
+          ? _successLight
+          : _successDark;
 
-  static const Color infoLight = Color(0xFF2D5BC7);
-  static const Color infoDark = Color(0xFF8AB0FF);
-
-  // The four-colour rating ramp lived here for the Forgot/Hard/Good/Easy
-  // buttons. Those were replaced by a single "Revised" action, so the ramp
-  // has no remaining caller.
+  /// Late, missed, needs attention — short of an outright error.
+  static Color warning(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.light
+          ? _warningLight
+          : _warningDark;
 }
 
 /// Light-first Material 3 theme, with a matching dark variant.
@@ -100,7 +110,7 @@ class AppTheme {
       surfaceContainerHighest: _lightSurfaceAlt,
       outline: _lightOutline,
       outlineVariant: Color(0xFFEFEFF6),
-      error: StatusColors.dangerLight,
+      error: Color(0xFFC42B3E),
       onError: Colors.white,
       errorContainer: Color(0xFFFCE8EA),
       onErrorContainer: Color(0xFF7A1523),
@@ -125,7 +135,7 @@ class AppTheme {
       surfaceContainerHighest: _darkSurfaceAlt,
       outline: _darkOutline,
       outlineVariant: Color(0xFF1C2338),
-      error: StatusColors.dangerDark,
+      error: Color(0xFFFF8A93),
       onError: Color(0xFF3D0710),
       errorContainer: Color(0xFF4A1620),
       onErrorContainer: Color(0xFFFFD6D9),

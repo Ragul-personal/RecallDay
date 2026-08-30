@@ -56,8 +56,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final light = theme.brightness == Brightness.light;
-    final success = light ? StatusColors.successLight : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
@@ -285,8 +284,7 @@ class _EntryRow extends ConsumerWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final light = theme.brightness == Brightness.light;
-    final success = light ? StatusColors.successLight : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     final done = entry.kind == _Kind.reviewed;
     final projected = entry.kind == _Kind.projected;

@@ -1,109 +1,147 @@
 # RecallDay — personal spaced-repetition reminders
 
-A minimalist, dark-first study companion that pings you to revise at scientifically-tuned intervals until you actually remember the material. **Local-only build**: no accounts, no cloud, no analytics, no ads.
+A minimal study companion that reminds you to revise at widening intervals until
+the material sticks. **Local-only**: no accounts, no cloud, no analytics, no ads.
 
-## Build it for your phone
+## Get the app
 
-One command on a computer with Flutter SDK installed:
+Every push to `main` builds a signed APK and publishes it:
 
-```bash
-flutter pub get
-flutter build apk --release --split-per-abi
-```
+**[Latest release](https://github.com/Ragul-personal/RecallDay/releases/latest)** →
+download `app-arm64-v8a-release.apk`.
 
-Then install `build/app/outputs/flutter-apk/app-arm64-v8a-release.apk` on your Android phone via `adb install` or by copying the file across. Full instructions in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
-
-The same APK works on any Android 7.0+ device.
+Releases are signed with a stable key, so a new version installs **over** the
+previous one and keeps your data. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+for how that pipeline works and how to build locally.
 
 ## What it does
 
-You add a topic. You pick how hard it is. RecallDay keeps reminding you to revise it on a spaced schedule until you mark it remembered. Each review you grade Forgot / Hard / Good / Easy, and the next interval adapts.
+You add a Subject, then Topics inside it. RecallDay schedules each topic's
+revisions and reminds you when they're due.
 
-- Persistent reminders (re-fire daily until reviewed), naming the subject and topic
-- Adaptive scheduling (SM-2 hybrid, see below)
-- Calendar view, 30-day analytics, subject-by-subject retention ranking
-- Markdown notes per topic
-- Swipe a topic to delete it; long-press a subject to edit or delete it
-- Automatic backups that survive uninstall (see below)
-- Dark-first Material 3 UI
+- **Today** shows only what is due now — mark each **Done** or **Not done**
+- **Reminders** name the subject and topic, and re-fire daily until actioned
+- **Two daily summaries** at 6am and 8pm, sent only when something is pending
+- **Attachments** per topic: images, video, documents, web and YouTube links
+- **Calendar** plots completed revisions backwards and scheduled ones forwards
+- **Progress** tracks streaks, activity and per-subject mastery
+- **Light and dark themes**, switchable
 
 ## Architecture
 
+Clean-architecture-lite. `presentation` depends on `domain`, never on `data`.
+`data` implements `domain`'s interfaces. `services` own everything that talks to
+the platform.
+
 ```
 lib/
-├── main.dart                       — bootstrap (Hive, notifications, WorkManager)
+├── main.dart                    — guarded bootstrap; always reaches runApp()
 ├── core/
-│   ├── theme/app_theme.dart        — Material 3 dark + light palettes
-│   ├── router/app_router.dart      — go_router 14
-│   ├── constants/                  — palette + icon catalog
-│   └── utils/                      — date label helpers
-├── domain/
-│   ├── entities/                   — pure Dart Subject, Topic, Review
-│   ├── repositories/               — abstract interfaces
+│   ├── constants/               — subject colour + icon catalogue
+│   ├── router/app_router.dart   — go_router; tabs in a StatefulShellRoute
+│   ├── theme/
+│   │   ├── app_theme.dart       — brand palette, light + dark, every component
+│   │   └── app_tokens.dart      — spacing, radii, motion — the 4pt grid
+│   └── utils/date_utils.dart    — relative date labels
+├── domain/                      — pure Dart, no Flutter, no I/O
+│   ├── entities/                — Subject, Topic, Review, Attachment
+│   ├── repositories/            — abstract interfaces
 │   └── usecases/
-│       └── spaced_repetition_engine.dart   ← the brain
+│       └── spaced_repetition_engine.dart   ← the scheduling brain
 ├── data/
-│   ├── models/                     — Hive @HiveType adapters (typeIds 1, 2, 3)
-│   └── repositories/               — Hive-backed implementations
-├── services/
-│   ├── storage_service.dart        — Hive bootstrap + compaction
-│   ├── backup_service.dart         — JSON snapshot to shared storage + restore
-│   ├── notification_service.dart   — flutter_local_notifications + tz
-│   └── scheduler_worker.dart       — WorkManager periodic re-arm
+│   ├── models/                  — Hive @HiveType adapters (typeIds 1, 2, 3)
+│   └── repositories/            — Hive-backed implementations
+├── services/                    — the platform edge
+│   ├── storage_service.dart     — Hive bootstrap + box accessors
+│   ├── backup_service.dart      — snapshots, folder sync, import/export
+│   ├── saf_service.dart         — Storage Access Framework bridge
+│   ├── attachment_service.dart  — picking and importing files
+│   ├── notification_service.dart— reminders + the two daily digests
+│   └── scheduler_worker.dart    — WorkManager periodic alarm re-arm
 └── presentation/
-    ├── providers/providers.dart    — Riverpod streams + commands
-    ├── pages/                      — Today, Subjects, Calendar, Analytics, Settings, ...
-    └── widgets/                    — TopicCard, EmptyState, SwipeToDelete, ...
+    ├── providers/
+    │   ├── providers.dart       — READ side: derived state (re-exports below)
+    │   ├── topic_commands.dart  — WRITE side: every mutation
+    │   └── theme_provider.dart  — light/dark/system, persisted
+    ├── pages/                   — one file per screen
+    └── widgets/                 — AppCard, TopicCard, EmptyState, …
 ```
 
-Clean-architecture-lite: presentation depends on domain, never on data. Data depends on domain. Services live alongside data.
+Two boundaries worth knowing:
+
+- **Reads and writes are separate.** `providers.dart` holds derived state only;
+  anything that changes data lives in `topic_commands.dart`. It re-exports the
+  commands, so a screen still needs one import.
+- **Hive is app-private; the user's folder is the durable copy.** Hive needs a
+  real filesystem path and cannot live on a SAF tree, so the database is
+  internal and mirrored to the chosen folder after every change.
 
 ## Spaced repetition
 
-`SpacedRepetitionEngine` (in `lib/domain/usecases/`) is a pure function with two phases:
+`SpacedRepetitionEngine` (`lib/domain/usecases/`) is a pure function — no I/O,
+fully unit-tested — with two phases:
 
-1. **Bootstrap** (`repetitions < 2`): walks a fixed Leitner ladder `[1, 3, 7, 15, 30, 60, 90]` days.
-2. **Steady state** (`repetitions ≥ 2`): SM-2-style multiplicative `next = currentInterval × ease × ratingMultiplier`.
+1. **Bootstrap** (`repetitions < 2`): walks a fixed ladder `[1, 3, 7, 15, 30,
+   60, 90]` days.
+2. **Steady state** (`repetitions ≥ 2`): SM-2-style
+   `next = currentInterval × ease × ratingMultiplier`.
 
-Ease updates per rating (Forgot −0.20, Hard −0.15, Good 0.00, Easy +0.15), clamped to `[1.30, 3.00]`. A `Forgot` rating at any stage rewinds to the first ladder rung. Hybrid was chosen because pure SM-2 has no useful first-interval prior, while pure Leitner can't adapt to topics the user knows well.
+The day a topic is created is its first exposure, not a revision — the first
+revision lands one ladder step later.
 
-Engine invariants are pinned by tests:
+> **Note on ease.** The engine models four ratings with per-rating ease deltas,
+> but the UI now records a single neutral "Done", so in practice ease stays at
+> its default and intervals follow the ladder. The grading model is kept
+> deliberately: it is pure, tested, and the natural place to reintroduce
+> difficulty-aware scheduling.
 
 ```bash
-flutter test
+flutter test    # engine invariants
 ```
 
-## Backup & restore
+## Storage and backup
 
-Android deletes an app's private data directory on uninstall — where Hive keeps its boxes — and no flag changes that. So the data is mirrored somewhere the package manager doesn't own. Two independent mechanisms:
+Android deletes an app's private directory on uninstall, so the durable copy has
+to live outside it. The user nominates a folder once, via the Storage Access
+Framework, and RecallDay keeps it current:
 
-1. **Android Auto Backup.** `allowBackup="true"` plus the rules in `res/xml/backup_rules.xml` and `res/xml/data_extraction_rules.xml`. Google backs the Hive files up to the user's account and restores them automatically on reinstall. Free and invisible, but only when device backup is on and the app is installed via Play or `adb restore`.
+```
+<chosen folder>/
+├── recallday-backup.json     — the database; rewritten on every change
+└── RecallDay-files/
+    └── <topicId>/<file>      — one copy per attachment, written once
+```
 
-   Both rule files are **exclude-only on purpose**. Adding a single `<include>` flips Auto Backup from "everything" to an allow-list, and Hive does *not* live in the `file` domain — `getApplicationDocumentsDirectory()` resolves to `/data/data/<pkg>/app_flutter`, which is `domain="root" path="app_flutter"`.
+Attachments are **not** bundled into an archive for the automatic backup.
+Re-zipping every file on each edit meant a topic rename rebuilt tens of
+megabytes in memory and pushed it through a method channel — enough to exhaust
+the heap and get the process killed. They are immutable once added, so each is
+streamed across exactly once.
 
-2. **A JSON snapshot in shared storage** (`Documents/RecallDay/recallday-backup.json`), written by `BackupService` after every change and left untouched by uninstall. Restore happens automatically on first launch into an empty database, or on demand from Settings.
+`Export` bundles the database and every attachment into one file for sharing;
+`Import` accepts that file, or a folder holding an unpacked backup. Picking a
+folder is what makes attachments recoverable: a file grant covers that file
+alone, so a lone data file can only carry records.
 
-   Writing there by raw path needs "All files access" on Android 11+, so `BackupService` *probes* for a writable directory rather than guessing from API level, and Settings reports honestly whether the location it landed on actually survives uninstall. `MANAGE_EXTERNAL_STORAGE` is fine for a sideloaded personal build; it would need justification for Play.
-
-Settings also offers "Copy JSON to clipboard" as a third, manual copy.
-
-## Storage footprint
-
-Hive uses a binary append-only log. Approximate disk costs:
-
-- One Subject ≈ 120 bytes
-- One Topic ≈ 280 bytes (varies with notes length)
-- One Review ≈ 70 bytes
-
-A heavy user with 1000 topics and 10000 reviews fits in ~1 MB on disk. Use **Settings → Compact storage** after bulk deletions to reclaim tombstoned space.
+Raw `/storage/emulated/0` paths were abandoned — writes there could succeed
+while the matching read failed with `EACCES`, `File.exists()` returned false on
+a denied read, and the OS silently rewrote file extensions. The rationale is
+documented at the top of `backup_service.dart`.
 
 ## Notification reliability
 
-The hardest problem in this app, by a long way. See [`docs/NOTIFICATION_RELIABILITY.md`](docs/NOTIFICATION_RELIABILITY.md) for the layered strategy and what we *can* and *cannot* guarantee on stock Android vs. OEM-modified builds. Short version: stock Android is fine; if you're on Xiaomi/OnePlus/Samsung, exempt RecallDay from battery optimization.
+The hardest problem in this app. See
+[`docs/NOTIFICATION_RELIABILITY.md`](docs/NOTIFICATION_RELIABILITY.md) for the
+layered strategy and what can and cannot be guaranteed. Short version: stock
+Android is fine; on Xiaomi, OnePlus or Samsung, exempt RecallDay from battery
+optimisation.
 
 ## What's intentionally not here
 
-- **No accounts, no Firebase, no cloud sync.** Backups are plain JSON files on your own phone; nothing is uploaded. The one network permission is for `google_fonts` fetching the Inter typeface on first launch — no app data leaves the device.
-- **No analytics.** No telemetry leaves your device.
-- **No streaks-as-pressure.** The streak counter is informational; missing a day doesn't reset progress.
-- **No widgets.** Homescreen widgets need per-platform native modules — significant work, deferred.
+- **No accounts, no cloud sync, no analytics.** Backups are plain files on your
+  own phone. The single network permission is for `google_fonts` fetching the
+  Inter typeface on first launch — no app data leaves the device.
+- **No streaks-as-pressure.** The streak is informational; a missed day moves
+  the revision without penalising progress.
+- **No home-screen widgets.** These need per-platform native modules —
+  significant work, deferred.

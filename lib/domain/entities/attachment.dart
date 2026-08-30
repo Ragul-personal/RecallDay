@@ -53,9 +53,6 @@ class Attachment {
       kind == AttachmentKind.video ||
       kind == AttachmentKind.file;
 
-  bool get isWeb =>
-      kind == AttachmentKind.youtube || kind == AttachmentKind.link;
-
   Map<String, dynamic> toJson() => {
         'id': id,
         'kind': kind.name,

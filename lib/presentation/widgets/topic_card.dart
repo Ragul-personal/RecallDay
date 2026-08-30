@@ -52,16 +52,12 @@ class TopicCard extends StatelessWidget {
     final subjectColor = SubjectPalette.readable(accent, brightness);
     final paused = topic.status == TopicStatus.paused;
     final mastered = topic.status == TopicStatus.completed;
-    final success = brightness == Brightness.light
-        ? StatusColors.successLight
-        : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     final Color dueColor = overdue
         ? cs.error
         : due
-            ? (brightness == Brightness.light
-                ? StatusColors.warningLight
-                : StatusColors.warningDark)
+            ? (StatusColors.warning(context))
             : cs.onSurfaceVariant;
 
     final statusLabel = mastered

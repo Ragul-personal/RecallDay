@@ -1,128 +1,102 @@
-# Build a personal APK and install it on your phone
+# Building and releasing RecallDay
 
-This is the simplest path: build the APK on a computer, transfer it to any Android phone, install. No Google Play, no developer account, no signing key required.
-
-The same APK installs on any Android device running 7.0 or newer.
-
----
-
-## What you need on the computer
-
-- Flutter SDK 3.27 or newer (`flutter --version`)
-- Android SDK Platform 34 (Android Studio installs this)
-- Java 17 (`java -version`)
-- A USB cable, OR a way to copy a file to the phone (Drive / email / file manager)
-
-If you don't have Flutter, install it: https://docs.flutter.dev/get-started/install
+Every push to `main` builds a signed APK in CI and publishes it as a numbered
+GitHub Release. Nothing needs to be built by hand.
 
 ---
 
-## Build the APK
+## How a release happens
 
-From the project root:
+`.github/workflows/build-apk.yml` runs on every push to `main`:
+
+1. Decodes the release keystore from the `KEYSTORE_BASE64` secret into
+   `android/app/release.p12`
+2. `flutter pub get` → `flutter analyze` (non-blocking) → `flutter test`
+3. `flutter build apk --release --split-per-abi`, stamping the release number
+   into the APK's version
+4. Publishes the three ABI-specific APKs to a release tagged `v<n>`
+
+Install **`app-arm64-v8a-release.apk`** on any modern phone. The `armeabi-v7a`
+build is for older 32-bit devices; `x86_64` is for emulators.
+
+---
+
+## Signing — why it matters more than it looks
+
+Android only lets an APK install **over** an existing one when both are signed
+by the same key. Without a keystore, Gradle falls back to a debug key that it
+regenerates on every clean CI runner, so each release carried a different
+signature, could not be installed over the last, and forced an uninstall — and
+uninstalling wipes app-private storage.
+
+Two repository secrets drive this:
+
+| Secret | Value |
+|---|---|
+| `KEYSTORE_BASE64` | the release keystore, base64-encoded |
+| `KEYSTORE_PASSWORD` | its password (also the key password) |
+
+The keystore is a PKCS12 file with the alias `recallday`. It is **not** in the
+repository and never should be.
+
+> **If the keystore is lost, it cannot be recreated.** Future builds would get a
+> different signature and could no longer be installed over the existing app,
+> which means uninstalling and losing local data. Keep a copy somewhere safe.
+
+If the secret is absent the build still succeeds, but is debug-signed and the
+release notes say so explicitly.
+
+---
+
+## Building locally
+
+Only needed for development — releases come from CI.
+
+Requires the Flutter SDK (**3.32.0 or newer** — `workmanager` sets that floor),
+the Android SDK with **platform 36** (the attachment plugins ship AARs compiled
+against it), and JDK 17.
 
 ```bash
-# 1. Pull dependencies (first time only)
 flutter pub get
-
-# 2. Build a release APK split per CPU architecture.
-#    --split-per-abi produces three smaller APKs instead of one fat one.
+flutter test
 flutter build apk --release --split-per-abi
 ```
 
-This produces three files under `build/app/outputs/flutter-apk/`:
-
-| File | Use this if your phone is… | Approx. size |
-|---|---|---|
-| `app-arm64-v8a-release.apk` | Any phone made after ~2017 (99% of users) | ~14 MB |
-| `app-armeabi-v7a-release.apk` | Older 32-bit Android device | ~13 MB |
-| `app-x86_64-release.apk` | Android emulator / x86 tablet | ~14 MB |
-
-> Don't know which? Pick `arm64-v8a`. If your phone refuses to install it, try `armeabi-v7a`.
-
-If you'd prefer a single fat APK (works on every architecture, ~30 MB):
+The APK lands in `build/app/outputs/flutter-apk/`. A local build uses
+`android/key.properties` if present, otherwise a debug key — so it will not
+install over a CI release.
 
 ```bash
-flutter build apk --release
-# → build/app/outputs/flutter-apk/app-release.apk
-```
-
----
-
-## Install on your phone
-
-### Option A — USB (fastest if you have a cable)
-
-```bash
-# Plug in the phone, enable USB debugging in Developer Options
-adb install build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-```
-
-### Option B — Transfer the file
-
-1. Copy the APK to your phone via Google Drive, email attachment, USB drag-and-drop, or any file-sharing app.
-2. On the phone, open the file via the system file manager. Android will ask "Allow installs from this source?" — say yes for your file manager.
-3. Tap Install. You'll see "App not installed by Play Protect" on first run; tap "Install anyway." This is normal for sideloaded APKs.
-
-### Option C — Build and run directly on the phone
-
-If your phone is plugged in:
-
-```bash
-flutter run --release
-```
-
-This compiles, installs, and launches in one step.
-
----
-
-## After installing
-
-On first launch RecallDay asks for two permissions:
-
-1. **Notifications** (Android 13+): without this, no reminders.
-2. **Schedule exact alarms** (Android 12+): without this, reminders are batched and may drift by up to 15 minutes.
-
-Grant both. If you skip them you can re-request from **Settings → Re-request permissions**.
-
-For the most reliable reminders on Xiaomi / OnePlus / Samsung / Vivo devices, also do:
-
-> **Android Settings → Apps → RecallDay → Battery → Don't optimize**
-
-Without this exemption, OEM battery managers occasionally kill scheduled alarms.
-
----
-
-## Updating
-
-When you change the code and want a new APK:
-
-```bash
-flutter build apk --release --split-per-abi
 adb install -r build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 ```
 
-The `-r` flag reinstalls without losing your data. Hive boxes are preserved across reinstalls because the package name (`com.recallday.app`) stays the same.
+`-r` reinstalls in place. It only works when the signatures match.
 
 ---
 
-## Reducing APK size further
+## Regenerating the icons
 
-If 14 MB still feels large:
+App and notification icons are generated from `Logo.png` at the repository root
+and committed under `android/app/src/main/res/`. They only need regenerating if
+the artwork changes.
 
-- Build with `--obfuscate --split-debug-info=build/symbols` (saves ~1.5 MB and obfuscates the Dart code).
-- Drop unused dependencies in `pubspec.yaml` (we already trimmed `firebase_*`, `google_sign_in`, `flutter_svg`, `flutter_slidable`).
-- Set `versionCode` properly so `adb install -r` always works.
+- **Launcher** — `mipmap-*/ic_launcher.png` plus an adaptive
+  `ic_launcher_foreground.png`. The mark sits at ~45% of the adaptive canvas:
+  Android only guarantees the inner 72 of 108dp is visible, so anything larger
+  gets clipped by a circular mask.
+- **Notification** — `drawable-*/ic_stat_recallday.png`, a transparent
+  monochrome silhouette. Android masks status-bar icons to their alpha channel,
+  so an opaque image renders as a solid white block.
 
-```bash
-flutter build apk --release --split-per-abi \
-  --obfuscate --split-debug-info=build/symbols
-```
+Both are named only from Dart strings, so `res/raw/keep.xml` stops the release
+resource shrinker from stripping them. Removing that file causes a black screen
+on launch in release builds.
 
 ---
 
-## Common errors
+## Version numbers
 
-- **`Could not resolve all artifacts ... google-services`**: you have an old `build.gradle` that still references Firebase. Confirm the file matches the version in this repo.
-- **`Execution failed for task ':app:processReleaseResources'`** with a missing icon: run `dart run flutter_launcher_icons` after placing your icon at `assets/icons/app_icon.png`.
-- **`SDK location not found`**: create `android/local.properties` with `sdk.dir=/path/to/Android/sdk` and `flutter.sdk=/path/to/flutter`.
+Releases are numbered 1, 2, 3… derived from the workflow run number minus
+`VERSION_OFFSET` in the workflow file. The number is stamped into the APK via
+`--build-name` / `--build-number`, so the version Android reports matches the
+release it came from.

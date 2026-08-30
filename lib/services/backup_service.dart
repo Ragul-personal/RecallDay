@@ -112,7 +112,7 @@ class BackupService {
   String buildSnapshotJson() =>
       const JsonEncoder.withIndent('  ').convert(buildSnapshot());
 
-  // ------------------------------------------------------- automatic backup
+  // ------------------------------------------- automatic snapshot (private)
 
   Future<File> _autoFile() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -177,6 +177,8 @@ class BackupService {
       return BackupResult.failure('$e');
     }
   }
+
+  // ------------------------------------------------ attachments -> the folder
 
   /// Copy one attachment into the chosen folder, streamed.
   ///
@@ -298,6 +300,8 @@ class BackupService {
   ///
   /// Heavier than the JSON mirror, so this runs when the app goes to the
   /// background and on an explicit request, not on every keystroke-free edit.
+  // ----------------------------------------------------------- folder as store
+
   /// Bring the folder fully up to date: database snapshot plus any attachment
   /// it is missing.
   ///
@@ -431,6 +435,8 @@ class BackupService {
       await box.put(key, m);
     }
   }
+
+  // ------------------------------------------------------------ housekeeping
 
   /// Delete every attachment the folder holds.
   ///

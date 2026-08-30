@@ -41,9 +41,7 @@ class SubjectDetailPage extends ConsumerWidget {
     final due = topics.where((t) => t.isDue).length;
     final done =
         topics.where((t) => t.status == TopicStatus.completed).length;
-    final success = theme.brightness == Brightness.light
-        ? StatusColors.successLight
-        : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     Future<void> confirmAndDelete() async {
       final ok = await confirmDelete(

@@ -418,9 +418,7 @@ class _MasteredPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final tt = theme.textTheme;
-    final success = theme.brightness == Brightness.light
-        ? StatusColors.successLight
-        : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

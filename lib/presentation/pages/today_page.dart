@@ -157,9 +157,7 @@ class _DayProgressCard extends StatelessWidget {
     final nothingDue = pending == 0 && doneToday == 0;
     final allDone = pending == 0 && doneToday > 0;
 
-    final success = theme.brightness == Brightness.light
-        ? StatusColors.successLight
-        : StatusColors.successDark;
+    final success = StatusColors.success(context);
 
     return AppCard(
       padding: const EdgeInsets.all(AppSpacing.xl),

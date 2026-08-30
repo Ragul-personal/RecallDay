@@ -130,12 +130,8 @@ class ReviseActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final light = theme.brightness == Brightness.light;
-    final success =
-        light ? StatusColors.successLight : StatusColors.successDark;
-    final warning =
-        light ? StatusColors.warningLight : StatusColors.warningDark;
+    final success = StatusColors.success(context);
+    final warning = StatusColors.warning(context);
 
     return Row(
       mainAxisSize: MainAxisSize.min,

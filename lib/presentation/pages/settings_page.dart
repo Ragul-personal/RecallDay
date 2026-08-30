@@ -137,11 +137,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Widget _reminders() {
     final p = _perms;
     final cs = Theme.of(context).colorScheme;
-    final light = Theme.of(context).brightness == Brightness.light;
-    final success =
-        light ? StatusColors.successLight : StatusColors.successDark;
-    final warning =
-        light ? StatusColors.warningLight : StatusColors.warningDark;
+    final success = StatusColors.success(context);
+    final warning = StatusColors.warning(context);
 
     // Nothing to fix once both permissions are held — the button that used to
     // sit here always reported "Permissions refreshed" whether or not anything
@@ -271,11 +268,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   // ----------------------------------------------------------------- backup
 
   Widget _backup() {
-    final light = Theme.of(context).brightness == Brightness.light;
-    final success =
-        light ? StatusColors.successLight : StatusColors.successDark;
-    final warning =
-        light ? StatusColors.warningLight : StatusColors.warningDark;
+    final success = StatusColors.success(context);
+    final warning = StatusColors.warning(context);
     final saved = _lastAuto;
 
     return _Group(
