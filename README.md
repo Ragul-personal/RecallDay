@@ -5,10 +5,14 @@ the material sticks. **Local-only**: no accounts, no cloud, no analytics, no ads
 
 ## Get the app
 
-Every push to `main` builds a signed APK and publishes it:
+**[ragul-personal.github.io/RecallDay](https://ragul-personal.github.io/RecallDay/)**
+— a plain download page with install steps and a QR code. That's the link to
+send people; this repository is not the front door.
 
-**[Latest release](https://github.com/Ragul-personal/RecallDay/releases/latest)** →
-download `app-arm64-v8a-release.apk`.
+Every push to `main` builds a signed APK and attaches it to the
+[latest release](https://github.com/Ragul-personal/RecallDay/releases/latest),
+which the download page links straight to. `app-arm64-v8a-release.apk` is the
+build for modern phones.
 
 Releases are signed with a stable key, so a new version installs **over** the
 previous one and keeps your data. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)

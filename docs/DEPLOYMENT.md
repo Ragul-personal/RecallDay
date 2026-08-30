@@ -1,7 +1,9 @@
 # Building and releasing RecallDay
 
-Every push to `main` builds a signed APK in CI and publishes it as a numbered
-GitHub Release. Nothing needs to be built by hand.
+Every push to `main` builds a signed APK in CI and publishes it as a GitHub
+Release, which the download page at
+[ragul-personal.github.io/RecallDay](https://ragul-personal.github.io/RecallDay/)
+links to. Nothing needs to be built by hand.
 
 ---
 
@@ -12,9 +14,9 @@ GitHub Release. Nothing needs to be built by hand.
 1. Decodes the release keystore from the `KEYSTORE_BASE64` secret into
    `android/app/release.p12`
 2. `flutter pub get` → `flutter analyze` (non-blocking) → `flutter test`
-3. `flutter build apk --release --split-per-abi`, stamping the release number
-   into the APK's version
-4. Publishes the three ABI-specific APKs to a release tagged `v<n>`
+3. `flutter build apk --release --split-per-abi`, stamping the version from
+   `pubspec.yaml` into the APK
+4. Publishes the three ABI-specific APKs to a release tagged `v<version>`
 
 Install **`app-arm64-v8a-release.apk`** on any modern phone. The `armeabi-v7a`
 build is for older 32-bit devices; `x86_64` is for emulators.
@@ -96,7 +98,34 @@ on launch in release builds.
 
 ## Version numbers
 
-Releases are numbered 1, 2, 3… derived from the workflow run number minus
-`VERSION_OFFSET` in the workflow file. The number is stamped into the APK via
-`--build-name` / `--build-number`, so the version Android reports matches the
-release it came from.
+Two numbers, and they are not the same thing.
+
+**versionName** — `1.0.0`, the only one anyone sees. It comes from `version:`
+in `pubspec.yaml`. Edit that line to ship a new version; CI reads it, stamps it
+into the APK with `--build-name` and tags the release `v1.0.0`. Pushing without
+changing it refreshes the existing release in place instead of creating another
+one.
+
+**versionCode** — an integer Android requires to *never decrease*. An APK whose
+code is lower than the installed one is rejected as a downgrade, and the only
+way past that is uninstalling, which wipes app-private storage. Releases were
+previously numbered off the workflow run number and reached 24 on real phones,
+so the code stays tied to `github.run_number` — monotonic by definition — while
+the name restarts at `1.0.0`. Nobody sees it; it exists so upgrades keep
+working.
+
+---
+
+## The download page
+
+`docs/index.html` is a static page served by GitHub Pages at
+<https://ragul-personal.github.io/RecallDay/>. It links to
+`/releases/latest/download/app-arm64-v8a-release.apk`, a URL GitHub keeps
+pointed at the newest release — so the page never needs republishing when a
+version ships. The version, size and date shown on it are fetched from the
+public GitHub API at page load, falling back to a static caption if that call
+fails.
+
+Pages is served from the `main` branch's `/docs` folder (Settings → Pages →
+Source: *Deploy from a branch*). `docs/.nojekyll` stops Jekyll from processing
+the folder, so the HTML is served exactly as committed.

@@ -1,10 +1,10 @@
 name: Build APK
 
 # Builds a release APK on every push to main and lets you trigger it by hand.
-# Each successful build publishes a numbered GitHub Release (1, 2, 3, …) with
-# the APKs attached — a plain https download link anyone can open, no GitHub
-# account needed, so it's shareable with friends directly. /releases/latest
-# always points at the newest one.
+# Each successful build publishes a GitHub Release with the APKs attached — a
+# plain https download link anyone can open, no GitHub account needed. The
+# download page at https://ragul-personal.github.io/RecallDay/ (docs/index.html)
+# points at /releases/latest/download/…, so it never needs updating.
 on:
   push:
     branches: [main]
@@ -13,21 +13,34 @@ on:
 permissions:
   contents: write # needed to create/update releases
 
-env:
-  # Releases are numbered 1, 2, 3, … Derived from the workflow run number
-  # minus the runs burned on getting the toolchain versions right, so the
-  # first real release is 1. Bump the offset only if run numbering is reset.
-  VERSION_OFFSET: 6
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compute version number
+      # Two different numbers, and conflating them broke things before.
+      #
+      # versionName ("1.0.0") is what users see, and comes from pubspec.yaml
+      # and nowhere else — bump `version:` there to ship 1.0.1, 1.1.0, …
+      #
+      # versionCode is an invisible integer Android requires to NEVER decrease.
+      # An APK whose code is below the installed one is refused as a downgrade
+      # and can only be installed by uninstalling first, which wipes
+      # app-private storage. Releases used to be numbered off the run number
+      # and already reached 24 in the wild, so the code stays tied to the run
+      # number — monotonic by definition — while the name restarts at 1.0.0.
+      - name: Resolve version
         id: ver
-        run: echo "n=$(( ${{ github.run_number }} - ${{ env.VERSION_OFFSET }} ))" >> "$GITHUB_OUTPUT"
+        run: |
+          name=$(sed -n 's/^version: *\([0-9][^+ ]*\).*/\1/p' pubspec.yaml | head -1)
+          if [ -z "$name" ]; then
+            echo "::error::Could not read version: from pubspec.yaml"
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "RecallDay $name (versionCode ${{ github.run_number }})"
 
       - uses: subosito/flutter-action@v2
         with:
@@ -66,22 +79,23 @@ jobs:
         run: flutter test
 
       - name: Build release APK (per-ABI split)
-        # --build-name/--build-number stamp the release number into the APK, so
-        # Android's app info and the GitHub release agree on the version.
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: >
           flutter build apk --release --split-per-abi
-          --build-name=${{ steps.ver.outputs.n }}.0.0
-          --build-number=${{ steps.ver.outputs.n }}
+          --build-name=${{ steps.ver.outputs.name }}
+          --build-number=${{ steps.ver.outputs.code }}
 
+      # Tagged by version name, so pushing without bumping pubspec.yaml
+      # refreshes the same release rather than piling up a new one per commit.
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ steps.ver.outputs.n }}
-          name: RecallDay ${{ steps.ver.outputs.n }}
+          tag: v${{ steps.ver.outputs.name }}
+          name: RecallDay ${{ steps.ver.outputs.name }}
+          commit: ${{ github.sha }}
           body: |
-            **RecallDay version ${{ steps.ver.outputs.n }}**
+            **RecallDay ${{ steps.ver.outputs.name }}**
 
             Download **`app-arm64-v8a-release.apk`** — that's the right one for
             virtually every modern Android phone.

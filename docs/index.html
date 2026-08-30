@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RecallDay — spaced-repetition reminders for Android</title>
+<meta name="description" content="A minimal study companion that reminds you to revise at widening intervals until the material sticks. Local-only: no accounts, no cloud, no ads.">
+<link rel="icon" href="logo.png">
+
+<!-- Link previews (WhatsApp, Telegram, Discord, iMessage). Absolute URLs only. -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="RecallDay">
+<meta property="og:description" content="Revise at widening intervals until it sticks. Free, local-only, no accounts.">
+<meta property="og:url" content="https://ragul-personal.github.io/RecallDay/">
+<meta property="og:image" content="https://ragul-personal.github.io/RecallDay/logo.png">
+<meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#6038D8">
+
+<style>
+  /* Palette lifted from lib/core/theme/app_theme.dart so the page and the app
+     read as the same product. */
+  :root {
+    --violet: #6038D8;
+    --violet-bright: #7757E3;
+    --bg: #F6F6FB;
+    --surface: #FFFFFF;
+    --surface-alt: #F0F0F7;
+    --outline: #E4E4EF;
+    --ink: #10142B;
+    --muted: #6A7191;
+    --shadow: 0 1px 2px rgba(16, 20, 43, .06), 0 12px 32px rgba(16, 20, 43, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --violet: #9E85FF;
+      --violet-bright: #B4A0FF;
+      --bg: #0A0E1C;
+      --surface: #141A2E;
+      --surface-alt: #1D2440;
+      --outline: #262E4C;
+      --ink: #E9EBF5;
+      --muted: #8891B2;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 22px; }
+  a { color: var(--violet); }
+
+  /* ---------- hero ---------- */
+  .hero { text-align: center; padding: 68px 0 48px; }
+  .hero img {
+    width: 104px; height: 104px; border-radius: 26px;
+    box-shadow: var(--shadow);
+  }
+  h1 {
+    margin: 26px 0 6px;
+    font-size: 44px; line-height: 1.1; letter-spacing: -.025em; font-weight: 700;
+  }
+  .tagline { margin: 0; color: var(--violet); font-weight: 600; letter-spacing: .01em; }
+  .lede {
+    margin: 20px auto 0; max-width: 30em;
+    color: var(--muted); font-size: 17px;
+  }
+
+  /* ---------- download ---------- */
+  .cta { margin: 34px 0 0; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 11px;
+    padding: 17px 34px; border-radius: 15px;
+    background: var(--violet); color: #fff;
+    font-size: 17px; font-weight: 600; text-decoration: none;
+    box-shadow: 0 6px 20px rgba(96, 56, 216, .32);
+    transition: transform .12s ease, background .12s ease;
+  }
+  .btn:hover { background: var(--violet-bright); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn svg { flex: none; }
+  .meta { margin: 14px 0 0; font-size: 14px; color: var(--muted); }
+  .meta a { color: var(--muted); }
+
+  /* ---------- cards ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    border-radius: 18px;
+    padding: 26px 28px;
+    margin: 18px 0;
+  }
+  h2 { font-size: 13px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0 0 16px; }
+
+  /* ---------- install steps ---------- */
+  ol { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+  ol li {
+    counter-increment: step;
+    position: relative; padding: 0 0 0 40px; margin: 0 0 14px;
+  }
+  ol li:last-child { margin-bottom: 0; }
+  ol li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 1px;
+    width: 25px; height: 25px; border-radius: 50%;
+    background: var(--surface-alt); color: var(--violet);
+    font-size: 13px; font-weight: 700;
+    display: grid; place-items: center;
+  }
+  .hint { color: var(--muted); font-size: 14px; }
+
+  /* ---------- features ---------- */
+  .features { display: grid; gap: 14px 26px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+  .feature b { display: block; font-size: 15px; }
+  .feature span { color: var(--muted); font-size: 14px; }
+
+  /* ---------- qr ---------- */
+  .qr { display: flex; align-items: center; gap: 24px; }
+  .qr canvas, .qr img {
+    width: 132px; height: 132px; flex: none;
+    background: #fff; border-radius: 12px; padding: 8px;
+    border: 1px solid var(--outline);
+  }
+  .qr p { margin: 0; color: var(--muted); font-size: 14px; }
+  @media (max-width: 480px) { .qr { flex-direction: column; text-align: center; } }
+
+  footer {
+    text-align: center; padding: 40px 0 56px;
+    color: var(--muted); font-size: 14px;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="hero">
+    <img src="logo.png" alt="RecallDay">
+    <h1>RecallDay</h1>
+    <p class="tagline">Remember today. Master tomorrow.</p>
+    <p class="lede">
+      A study companion that reminds you to revise at widening intervals — until
+      the material actually sticks.
+    </p>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/Ragul-personal/RecallDay/releases/latest/download/app-arm64-v8a-release.apk">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M3.5 17v2a2 2 0 002 2h13a2 2 0 002-2v-2"/>
+        </svg>
+        Download for Android
+      </a>
+      <p class="meta">
+        <span id="version">Free · Android 7.0+</span> ·
+        <a href="https://github.com/Ragul-personal/RecallDay/releases/latest">other builds</a>
+      </p>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Installing</h2>
+    <ol>
+      <li>Tap <b>Download for Android</b> above — you'll get an <code>.apk</code> file.</li>
+      <li>Open it. Android asks permission to <b>install unknown apps</b>; allow it for
+        your browser, then tap <b>Install</b>.
+        <div class="hint">Expected — it just means the app doesn't come from the Play Store.</div>
+      </li>
+      <li>If Play Protect warns about an unknown developer, choose <b>Install anyway</b>.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>Share it</h2>
+    <div class="qr">
+      <canvas id="qr" width="132" height="132" aria-label="QR code linking to this page"></canvas>
+      <p>
+        Point a friend's camera here to open this page on their phone.<br>
+        Or send them <b>ragul-personal.github.io/RecallDay</b>
+      </p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>What it does</h2>
+    <div class="features">
+      <div class="feature"><b>Today</b><span>Only what's due right now — mark each done or not done.</span></div>
+      <div class="feature"><b>Reminders</b><span>Named by subject and topic, repeating daily until actioned.</span></div>
+      <div class="feature"><b>Attachments</b><span>Images, video, documents, web and YouTube links per topic.</span></div>
+      <div class="feature"><b>Calendar</b><span>Completed revisions behind you, scheduled ones ahead.</span></div>
+      <div class="feature"><b>Progress</b><span>Streaks, activity and per-subject mastery.</span></div>
+      <div class="feature"><b>Private by design</b><span>No accounts, no cloud, no analytics, no ads.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    Open source ·
+    <a href="https://github.com/Ragul-personal/RecallDay">github.com/Ragul-personal/RecallDay</a>
+  </footer>
+
+</div>
+
+<script>
+  // Show the real version on the button caption. Public, unauthenticated
+  // endpoint; if it's rate-limited or offline the static caption just stays.
+  fetch('https://api.github.com/repos/Ragul-personal/RecallDay/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' },
+  })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (release) {
+      var apk = (release.assets || []).find(function (a) {
+        return a.name === 'app-arm64-v8a-release.apk';
+      });
+      var bits = ['Version ' + String(release.tag_name || '').replace(/^v/, '')];
+      if (apk) bits.push((apk.size / 1048576).toFixed(1) + ' MB');
+      bits.push('Android 7.0+');
+      document.getElementById('version').textContent = bits.join(' · ');
+    })
+    .catch(function () { /* keep the static caption */ });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script>
+  // Decorative only — if the CDN is blocked, drop the whole card rather than
+  // leaving an empty white square.
+  (function () {
+    var canvas = document.getElementById('qr');
+    if (!window.QRCode || !canvas) {
+      if (canvas) canvas.closest('.card').remove();
+      return;
+    }
+    QRCode.toCanvas(canvas, 'https://ragul-personal.github.io/RecallDay/', {
+      width: 132, margin: 0, color: { dark: '#10142B', light: '#FFFFFF' },
+    }, function (err) { if (err) canvas.closest('.card').remove(); });
+  })();
+</script>
+
+</body>
+</html>
