@@ -92,6 +92,49 @@ final streakDaysProvider = Provider<int>((ref) {
   return streak;
 });
 
+/// Longest run of consecutive days with at least one revision.
+///
+/// Worth surfacing next to the current streak: on the day a streak breaks, the
+/// current count drops to zero and the only thing left showing progress is the
+/// best you have managed.
+final bestStreakProvider = Provider<int>((ref) {
+  ref.watch(topicsStreamProvider);
+  final days = <DateTime>{};
+  for (final r in ref.watch(topicRepositoryProvider).allReviews()) {
+    days.add(DateTime(r.reviewedAt.year, r.reviewedAt.month, r.reviewedAt.day));
+  }
+  if (days.isEmpty) return 0;
+
+  final sorted = days.toList()..sort();
+  var best = 1;
+  var run = 1;
+  for (var i = 1; i < sorted.length; i++) {
+    final gap = sorted[i].difference(sorted[i - 1]).inDays;
+    run = gap == 1 ? run + 1 : 1;
+    if (run > best) best = run;
+  }
+  return best;
+});
+
+/// Revisions recorded per day for the last [days] days, oldest first.
+final recentActivityProvider = Provider<List<int>>((ref) {
+  ref.watch(topicsStreamProvider);
+  const days = 30;
+  final reviews = ref.watch(topicRepositoryProvider).allReviews();
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+
+  final counts = <DateTime, int>{};
+  for (final r in reviews) {
+    final d = DateTime(r.reviewedAt.year, r.reviewedAt.month, r.reviewedAt.day);
+    counts[d] = (counts[d] ?? 0) + 1;
+  }
+  return List.generate(
+    days,
+    (i) => counts[today.subtract(Duration(days: days - 1 - i))] ?? 0,
+  );
+});
+
 // ---------- mutations / commands ----------
 class TopicCommands {
   TopicCommands(this.ref);

@@ -1,6 +1,6 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_theme.dart';
@@ -14,10 +14,19 @@ import '../widgets/tab_app_bar.dart';
 
 /// Progress.
 ///
-/// Retention was previously reported as a raw "ease 2.35" number, which is an
-/// internal SM-2 parameter and means nothing to a user. It's now shown as a
-/// proportional bar with a plain-language label; the number is still there for
-/// anyone who wants it, just no longer the headline.
+/// Rebuilt around what the app actually records now. Two things were dropped:
+///
+///   • **Retention by subject.** It ranked subjects by SM-2 ease, but ease only
+///     moves when the user grades a recall, and grading was replaced by a
+///     single Done action that always records the neutral rating. Every subject
+///     therefore sat at exactly 2.5 forever — an identical bar on every row,
+///     dressed up as insight.
+///   • **Paused / active tile counts.** Pausing is rare and the number told the
+///     user nothing they could act on.
+///
+/// What replaces them is drawn only from things the user actually did: days
+/// they revised, revisions completed, topics they chose to master, and what is
+/// due next.
 class AnalyticsPage extends ConsumerWidget {
   const AnalyticsPage({super.key});
 
@@ -31,16 +40,14 @@ class AnalyticsPage extends ConsumerWidget {
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
     final reviews = ref.watch(topicRepositoryProvider).allReviews();
-
-    final completed =
-        topics.where((t) => t.status == TopicStatus.completed).length;
-    final overdue = topics.where((t) => t.isOverdue).length;
-    final active = topics.where((t) => t.status == TopicStatus.active).length;
+    final streak = ref.watch(streakDaysProvider);
+    final best = ref.watch(bestStreakProvider);
+    final activity = ref.watch(recentActivityProvider);
 
     final success = light ? StatusColors.successLight : StatusColors.successDark;
     final warning = light ? StatusColors.warningLight : StatusColors.warningDark;
 
-    if (reviews.isEmpty && topics.isEmpty) {
+    if (topics.isEmpty && reviews.isEmpty) {
       return const CustomScrollView(
         slivers: [
           TabAppBar(title: 'Progress'),
@@ -48,42 +55,24 @@ class AnalyticsPage extends ConsumerWidget {
             hasScrollBody: false,
             child: EmptyState(
               icon: Icons.insights_rounded,
-              title: 'No progress yet',
+              title: 'Nothing to show yet',
               subtitle:
-                  'Once you start reviewing topics, your streaks and retention '
-                  'will show up here.',
+                  'Once you start revising, your streak and history will '
+                  'build up here.',
             ),
           ),
         ],
       );
     }
 
-    // Reviews per day, last 30 days.
     final now = DateTime.now();
-    final spots = List.generate(30, (i) {
-      final day = DateTime(now.year, now.month, now.day)
-          .subtract(Duration(days: 29 - i));
-      final c = reviews
-          .where((r) =>
-              r.reviewedAt.year == day.year &&
-              r.reviewedAt.month == day.month &&
-              r.reviewedAt.day == day.day)
-          .length;
-      return FlSpot(i.toDouble(), c.toDouble());
-    });
-    final peak = spots.fold<double>(0, (m, s) => s.y > m ? s.y : m);
-    final last30 = spots.fold<double>(0, (a, s) => a + s.y).round();
+    final weekAgo = now.subtract(const Duration(days: 7));
+    final thisWeek = reviews.where((r) => r.reviewedAt.isAfter(weekAgo)).length;
 
-    // Average ease per subject, ranked.
-    final easeBySubject = <String, List<double>>{};
-    for (final t in topics) {
-      easeBySubject.putIfAbsent(t.subjectId, () => []).add(t.ease);
-    }
-    final ranked = easeBySubject.entries
-        .map((e) =>
-            MapEntry(e.key, e.value.reduce((a, b) => a + b) / e.value.length))
-        .toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final mastered =
+        topics.where((t) => t.status == TopicStatus.completed).length;
+    final dueToday = ref.watch(dueTodayProvider).length +
+        ref.watch(overdueProvider).length;
 
     return CustomScrollView(
       slivers: [
@@ -98,20 +87,10 @@ class AnalyticsPage extends ConsumerWidget {
           sliver: SliverList.list(
             children: [
               FadeSlideIn(
-                child: Row(
-                  children: [
-                    _Stat(
-                      label: 'Reviews',
-                      value: reviews.length,
-                      accent: cs.primary,
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    _Stat(
-                      label: 'Active',
-                      value: active,
-                      accent: success,
-                    ),
-                  ],
+                child: _StreakCard(
+                  streak: streak,
+                  best: best,
+                  activity: activity,
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
@@ -120,125 +99,81 @@ class AnalyticsPage extends ConsumerWidget {
                 child: Row(
                   children: [
                     _Stat(
-                      label: 'Overdue',
-                      value: overdue,
-                      accent: overdue > 0 ? cs.error : cs.onSurfaceVariant,
+                      label: 'Revisions',
+                      value: reviews.length,
+                      caption: 'all time',
+                      accent: cs.primary,
                     ),
                     const SizedBox(width: AppSpacing.md),
                     _Stat(
-                      label: 'Completed',
-                      value: completed,
-                      accent: warning,
+                      label: 'This week',
+                      value: thisWeek,
+                      caption: 'last 7 days',
+                      accent: success,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: AppSpacing.xl),
+              const SizedBox(height: AppSpacing.md),
               FadeSlideIn(
                 index: 2,
-                child: AppCard(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    AppSpacing.xl,
-                    AppSpacing.lg,
-                    AppSpacing.lg,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text('Last 30 days', style: tt.titleMedium),
-                          ),
-                          Text('$last30 reviews', style: tt.labelSmall),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.xl),
-                      SizedBox(
-                        height: 140,
-                        child: LineChart(
-                          LineChartData(
-                            minY: 0,
-                            maxY: peak < 3 ? 3 : peak * 1.25,
-                            gridData: const FlGridData(show: false),
-                            borderData: FlBorderData(show: false),
-                            titlesData: const FlTitlesData(show: false),
-                            lineTouchData: const LineTouchData(enabled: false),
-                            lineBarsData: [
-                              LineChartBarData(
-                                spots: spots,
-                                isCurved: true,
-                                curveSmoothness: 0.28,
-                                barWidth: 2.5,
-                                color: cs.primary,
-                                dotData: const FlDotData(show: false),
-                                belowBarData: BarAreaData(
-                                  show: true,
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      cs.primary.withValues(alpha: 0.22),
-                                      cs.primary.withValues(alpha: 0.0),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
+                child: Row(
+                  children: [
+                    _Stat(
+                      label: 'Due now',
+                      value: dueToday,
+                      caption: dueToday == 0 ? 'all clear' : 'to revise',
+                      accent: dueToday > 0 ? warning : cs.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    _Stat(
+                      label: 'Mastered',
+                      value: mastered,
+                      caption: 'stopped',
+                      accent: mastered > 0 ? success : cs.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
+              if (subjects.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.xxl),
+                Text('By subject', style: tt.titleMedium),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'How far through each subject you are.',
+                  style: tt.labelSmall,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                for (var i = 0; i < subjects.length; i++)
+                  Builder(
+                    builder: (_) {
+                      final s = subjects[i];
+                      final mine =
+                          topics.where((t) => t.subjectId == s.id).toList();
+                      return FadeSlideIn(
+                        index: i,
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.only(bottom: AppSpacing.sm),
+                          child: _SubjectProgress(
+                            name: s.name,
+                            color: SubjectPalette.readable(
+                              s.color,
+                              theme.brightness,
+                            ),
+                            total: mine.length,
+                            mastered: mine
+                                .where((t) =>
+                                    t.status == TopicStatus.completed)
+                                .length,
+                            due: mine.where((t) => t.isDue).length,
+                            onTap: () => context.push('/subject/${s.id}'),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('30 days ago', style: tt.labelSmall),
-                          Text('Today', style: tt.labelSmall),
-                        ],
-                      ),
-                    ],
+                      );
+                    },
                   ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xl),
-              FadeSlideIn(
-                index: 3,
-                child: AppCard(
-                  padding: const EdgeInsets.all(AppSpacing.xl),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Retention by subject', style: tt.titleMedium),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        'How well material is sticking, based on your ratings.',
-                        style: tt.labelSmall,
-                      ),
-                      const SizedBox(height: AppSpacing.lg),
-                      if (ranked.isEmpty)
-                        Text('Not enough data yet.', style: tt.bodySmall)
-                      else
-                        for (final e in ranked)
-                          Builder(
-                            builder: (_) {
-                              final s = subjects
-                                  .where((s) => s.id == e.key)
-                                  .firstOrNull;
-                              return _RetentionBar(
-                                name: s?.name ?? 'No subject',
-                                color: SubjectPalette.readable(
-                                  s?.color ?? cs.primary,
-                                  theme.brightness,
-                                ),
-                                ease: e.value,
-                              );
-                            },
-                          ),
-                    ],
-                  ),
-                ),
-              ),
+              ],
             ],
           ),
         ),
@@ -247,14 +182,135 @@ class AnalyticsPage extends ConsumerWidget {
   }
 }
 
+/// Streak, best streak, and a 30-day activity strip.
+///
+/// The strip replaces a smoothed line chart. With one or two revisions on a
+/// typical day the line was mostly a jagged path between 0 and 1, which read
+/// as noise; a per-day cell answers "did I study that day?" at a glance, which
+/// is the actual question.
+class _StreakCard extends StatelessWidget {
+  final int streak;
+  final int best;
+  final List<int> activity;
+
+  const _StreakCard({
+    required this.streak,
+    required this.best,
+    required this.activity,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final tt = theme.textTheme;
+    final active = streak > 0;
+
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.local_fire_department_rounded,
+                color: active ? cs.primary : cs.onSurfaceVariant,
+                size: 22,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        AnimatedCount(
+                          streak,
+                          style: tt.displaySmall?.copyWith(
+                            color: active ? cs.primary : cs.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          streak == 1 ? 'day streak' : 'days in a row',
+                          style: tt.bodySmall,
+                        ),
+                      ],
+                    ),
+                    Text(
+                      best > 0 ? 'Best so far: $best days' : 'Revise to start one',
+                      style: tt.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          _ActivityStrip(activity: activity),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('30 days ago', style: tt.labelSmall),
+              Text('Today', style: tt.labelSmall),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActivityStrip extends StatelessWidget {
+  final List<int> activity;
+  const _ActivityStrip({required this.activity});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final count = activity.length;
+
+    return Row(
+      children: [
+        for (var i = 0; i < count; i++) ...[
+          Expanded(
+            child: Container(
+              height: 34,
+              decoration: BoxDecoration(
+                // Four steps rather than a continuous scale: at a handful of
+                // revisions a day, a gradient would be indistinguishable.
+                color: switch (activity[i]) {
+                  0 => cs.surfaceContainerHighest,
+                  1 => cs.primary.withValues(alpha: 0.35),
+                  2 => cs.primary.withValues(alpha: 0.65),
+                  _ => cs.primary,
+                },
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+          if (i < count - 1) const SizedBox(width: 3),
+        ],
+      ],
+    );
+  }
+}
+
 class _Stat extends StatelessWidget {
   final String label;
   final int value;
+  final String caption;
   final Color accent;
 
   const _Stat({
     required this.label,
     required this.value,
+    required this.caption,
     required this.accent,
   });
 
@@ -273,6 +329,8 @@ class _Stat extends StatelessWidget {
               value,
               style: tt.displaySmall?.copyWith(color: accent),
             ),
+            const SizedBox(height: 2),
+            Text(caption, style: tt.labelSmall),
           ],
         ),
       ),
@@ -280,58 +338,60 @@ class _Stat extends StatelessWidget {
   }
 }
 
-/// One subject's retention, as a proportional bar.
+/// One subject's mastery progress.
 ///
-/// Ease is clamped to [1.3, 3.0] by the engine, so that range maps to 0–100%.
-class _RetentionBar extends StatelessWidget {
+/// Mastered-out-of-total is something the user directly controls, unlike the
+/// ease figure this replaced.
+class _SubjectProgress extends StatelessWidget {
   final String name;
   final Color color;
-  final double ease;
+  final int total;
+  final int mastered;
+  final int due;
+  final VoidCallback onTap;
 
-  const _RetentionBar({
+  const _SubjectProgress({
     required this.name,
     required this.color,
-    required this.ease,
+    required this.total,
+    required this.mastered,
+    required this.due,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
-    final pct = ((ease - 1.3) / (3.0 - 1.3)).clamp(0.0, 1.0);
+    final pct = total == 0 ? 0.0 : mastered / total;
 
-    final label = switch (pct) {
-      > 0.75 => 'Strong',
-      > 0.45 => 'Steady',
-      > 0.2 => 'Shaky',
-      _ => 'Needs work',
-    };
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+    return AppCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
                   name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: tt.bodyMedium,
+                  style: tt.titleSmall,
                 ),
               ),
-              Text(
-                label,
-                style: tt.labelSmall?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              if (due > 0)
+                AppPill('$due due', color: color, tonal: true),
             ],
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpacing.md),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: TweenAnimationBuilder<double>(
@@ -345,6 +405,13 @@ class _RetentionBar extends StatelessWidget {
                 valueColor: AlwaysStoppedAnimation(color),
               ),
             ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            total == 0
+                ? 'No topics yet'
+                : '$mastered of $total mastered',
+            style: tt.labelSmall,
           ),
         ],
       ),

@@ -128,15 +128,13 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
     await StorageService.instance.markOnboarded();
 
-    // Anything already in the folder is renamed aside before the app writes
-    // its own files, so adopting a folder never costs the user the backup
-    // they had there — including the very .zip just imported from it.
-    await BackupService.instance.preserveExistingBackups();
+    // Fold anything already in the folder into what we have, then write the
+    // one canonical file. Previous and current data end up merged in a single
+    // backup rather than sitting beside each other as rival copies.
+    await BackupService.instance.adoptFolder();
 
     // Restored topics carry no OS alarms, and a new install has none either.
     await ref.read(topicCommandsProvider).reArmAllNotifications();
-    await BackupService.instance.flush();
-    await BackupService.instance.mirrorArchiveToFolder();
     if (!mounted) return;
     context.go('/today');
   }
@@ -332,9 +330,10 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
       body: 'Pick the folder RecallDay will keep your data in from now on, '
           'updating it as you go.\n\n'
           'It does not have to be the folder your backup came from — that is '
-          'only a convenient option if you want everything in one place. Any '
-          'folder works, and the backup you just imported is left untouched '
-          'either way.',
+          'only a convenient option if you want everything in one place.\n\n'
+          'RecallDay keeps a single backup file there and updates it in place. '
+          'If the folder already has one, it is merged with what you just '
+          'imported, so you never end up choosing between copies.',
       onBack: () => _go(_Step.existingImport),
       children: [
         _FolderTile(

@@ -356,10 +356,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (uri == null || !mounted) return;
 
     setState(() => _busy = true);
-    // Write straight away so the folder isn't empty and, more importantly, so
-    // any failure surfaces now rather than silently at some later save.
+    // Merge anything already in the folder, then write the single canonical
+    // file — and surface a failure now rather than silently at some later save.
+    await BackupService.instance.adoptFolder();
     final r = await BackupService.instance.flush();
-    await BackupService.instance.mirrorArchiveToFolder();
     await _refreshStatus();
     if (!mounted) return;
     setState(() => _busy = false);

@@ -64,8 +64,18 @@ class BackupService {
   /// The automatic snapshot, in app-private storage.
   static const String _autoFileName = 'recallday-backup.json';
 
-  /// Name of the full archive inside the user's chosen folder.
+  /// The single file the app maintains inside the user's chosen folder.
+  ///
+  /// Exactly one, deliberately. Earlier versions wrote a .json *and* a .zip,
+  /// and renamed anything already there to `-previous-<date>`, so a couple of
+  /// reinstalls left a folder full of near-identical backups and no obvious
+  /// one to pick. There is now one name, always current, always the one to
+  /// choose.
   static const String _archiveFileName = 'recallday-backup.zip';
+
+  /// Written by versions before the single-file rule. Still read on restore so
+  /// an older folder isn't orphaned; never written again.
+  static const String _legacyFolderJson = 'recallday-backup.json';
 
   /// Entry names inside an exported archive.
   static const String _archiveData = 'data.json';
@@ -107,7 +117,18 @@ class BackupService {
   /// on disk before the user moves on. Writes are serialised with a single
   /// queued follow-up: a burst of edits ends in exactly one write of the final
   /// state, and the file is never written concurrently.
-  void scheduleAutoBackup() => unawaited(_runSerialised());
+  Timer? _folderDebounce;
+
+  void scheduleAutoBackup() {
+    unawaited(_runSerialised());
+    // Zipping attachments is far heavier than the JSON snapshot, so the
+    // folder copy settles a couple of seconds after the last change rather
+    // than rebuilding on every one.
+    _folderDebounce?.cancel();
+    _folderDebounce = Timer(const Duration(seconds: 2), () {
+      unawaited(mirrorArchiveToFolder());
+    });
+  }
 
   Future<void> _runSerialised() async {
     if (_writing) {
@@ -125,28 +146,20 @@ class BackupService {
     }
   }
 
-  /// Write the automatic snapshot.
+  /// Write the automatic snapshot to app-private storage.
   ///
-  /// Always to app-private storage, which cannot fail for permission reasons.
-  /// Then, if the user has nominated a folder, the same JSON is mirrored there
-  /// — that copy is what survives an uninstall, and it is why the export step
-  /// is optional rather than the only durable route.
+  /// Cheap and cannot fail for permission reasons, so it runs on every change.
+  /// The user's folder is updated separately by [mirrorArchiveToFolder], on a
+  /// short debounce — that one has to re-zip every attachment, which would be
+  /// far too slow to do inline with a keystroke.
   Future<BackupResult> writeAutoBackup() async {
     try {
-      final json = buildSnapshotJson();
       final f = await _autoFile();
-      await f.writeAsString(json, flush: true);
-
-      final mirrored = await SafService.instance.writeFile(
-        _autoFileName,
-        Uint8List.fromList(utf8.encode(json)),
-        mime: 'application/json',
-      );
-
+      await f.writeAsString(buildSnapshotJson(), flush: true);
       final store = StorageService.instance;
       return BackupResult.success(
         path: f.path,
-        mirroredToFolder: mirrored,
+        mirroredToFolder: await SafService.instance.hasAccess(),
         subjects: store.subjects.length,
         topics: store.topics.length,
         reviews: store.reviews.length,
@@ -186,55 +199,75 @@ class BackupService {
     final zip = await saf.readFile(_archiveFileName);
     if (zip != null) return restoreFromArchiveBytes(zip, merge: merge);
 
-    final json = await saf.readFile(_autoFileName);
+    // Folders written by earlier versions may still only have the .json.
+    final json = await saf.readFile(_legacyFolderJson);
     if (json != null) {
       return restoreFromJson(utf8.decode(json), merge: merge);
     }
     return null;
   }
 
-  /// Move any backup already in the chosen folder aside before the app starts
-  /// writing its own.
+  /// Take ownership of the chosen folder, folding in whatever is already there.
   ///
-  /// Adopting a folder must never cost the user the file they already had
-  /// there. Renaming keeps it — under a dated name — instead of letting the
-  /// first automatic save overwrite it.
-  Future<void> preserveExistingBackups() async {
+  /// If the folder already holds a RecallDay backup it is merged into the
+  /// current database — by id, so nothing is duplicated — and then the single
+  /// canonical file is rewritten from the combined result. Previous and
+  /// current data end up in one file rather than side by side.
+  ///
+  /// This replaced renaming the old file to `-previous-<date>`: that kept the
+  /// data safe but left the folder accumulating near-identical backups with no
+  /// obvious one to choose.
+  Future<RestoreSummary?> adoptFolder() async {
     final saf = SafService.instance;
-    if (!await saf.hasAccess()) return;
+    if (!await saf.hasAccess()) return null;
 
-    final now = DateTime.now();
-    final stamp = '${now.year}'
-        '${now.month.toString().padLeft(2, '0')}'
-        '${now.day.toString().padLeft(2, '0')}-'
-        '${now.hour.toString().padLeft(2, '0')}'
-        '${now.minute.toString().padLeft(2, '0')}';
-
-    for (final name in const [_archiveFileName, _autoFileName]) {
-      if (!await saf.hasFile(name)) continue;
-      final dot = name.lastIndexOf('.');
-      final base = name.substring(0, dot);
-      final ext = name.substring(dot);
-      await saf.renameFile(name, '$base-previous-$stamp$ext');
+    RestoreSummary? merged;
+    try {
+      final zip = await saf.readFile(_archiveFileName);
+      if (zip != null) {
+        merged = await restoreFromArchiveBytes(zip, merge: true);
+      } else {
+        final legacy = await saf.readFile(_legacyFolderJson);
+        if (legacy != null) {
+          merged = await restoreFromJson(utf8.decode(legacy), merge: true);
+        }
+      }
+    } catch (e) {
+      // A folder holding something unreadable must not block setup. The
+      // canonical file is rewritten below either way.
+      debugPrint('[backup] could not merge existing folder backup: $e');
     }
+
+    // Tidy up the older two-file layout so only one file remains.
+    if (await saf.hasFile(_legacyFolderJson)) {
+      await saf.deleteFile(_legacyFolderJson);
+    }
+
+    await writeAutoBackup();
+    await mirrorArchiveToFolder();
+    return merged;
   }
 
   /// Whether the chosen folder holds anything restorable.
   Future<bool> folderHasBackup() async {
     final saf = SafService.instance;
     if (!await saf.hasAccess()) return false;
-    return await saf.readFile(_archiveFileName) != null ||
-        await saf.readFile(_autoFileName) != null;
+    return await saf.hasFile(_archiveFileName) ||
+        await saf.hasFile(_legacyFolderJson);
   }
 
   /// Write now and report. Used on app background and by Settings.
   Future<BackupResult> flush() async {
+    _folderDebounce?.cancel();
+    _folderDebounce = null;
     while (_writing) {
       await Future<void>.delayed(const Duration(milliseconds: 40));
     }
     _writing = true;
     try {
-      return await writeAutoBackup();
+      final r = await writeAutoBackup();
+      await mirrorArchiveToFolder();
+      return r;
     } finally {
       _writing = false;
     }
