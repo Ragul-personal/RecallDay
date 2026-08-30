@@ -317,19 +317,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           onTap: _busy ? null : _pickFolder,
         ),
-        if (_folderOk)
-          ListTile(
-            leading: const Icon(Icons.download_outlined),
-            title: const Text('Restore from folder'),
-            subtitle: const Text('Read the backup back out of your folder'),
-            onTap: _busy ? null : _restoreFromFolder,
-          ),
         ListTile(
           leading: const Icon(Icons.ios_share_rounded),
           title: const Text('Export a copy'),
           subtitle: const Text(
-            'One .zip with everything, including attachments — for a second '
-            'copy somewhere else',
+            'One backup file holding everything — subjects, topics, review '
+            'history and every attachment',
           ),
           onTap: _busy
               ? null
@@ -343,8 +336,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ),
         ListTile(
           leading: const Icon(Icons.file_open_outlined),
-          title: const Text('Import a file'),
-          subtitle: const Text('Restore from a .zip or .json you saved'),
+          title: const Text('Import a backup'),
+          subtitle: const Text(
+            'Restore everything from a backup file you exported',
+          ),
           onTap: _busy ? null : _import,
         ),
       ],
@@ -376,42 +371,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
-  Future<void> _restoreFromFolder() async {
-    final ok = await confirmDelete(
-      context,
-      title: 'Restore from your folder?',
-      message: 'Subjects and topics with the same id are overwritten; '
-          'anything else you have now is kept.',
-      confirmLabel: 'Restore',
-      destructive: false,
-    );
-    if (!ok || !mounted) return;
 
-    setState(() => _busy = true);
-    try {
-      final summary =
-          await BackupService.instance.restoreFromFolder(merge: true);
-      await ref.read(topicCommandsProvider).reArmAllNotifications();
-      if (!mounted) return;
-      if (summary == null) {
-        await _details(
-          'Nothing to restore',
-          'That folder has no RecallDay backup in it yet.',
-        );
-      } else if (summary.isEmpty) {
-        await _details(
-          'Nothing restored',
-          'The backup was read but contained no subjects or topics.',
-        );
-      } else {
-        _toast('Restored $summary');
-      }
-    } catch (e) {
-      if (mounted) await _details('Restore failed', '$e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
 
   Future<void> _import() async {
     setState(() => _busy = true);
@@ -453,9 +413,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               context,
               title: 'Reset all data?',
               message: 'This deletes every subject, topic, review and '
-                  'attachment on this device, and clears the automatic saved '
-                  'copy too. Export a backup file first if you want to keep '
-                  'any of it — an exported .zip is not affected.',
+                  'attachment — both on this device and in your folder. '
+                  'Export a backup first if you want to keep any of it; an '
+                  'exported file is not affected.',
               confirmLabel: 'Reset',
             );
             if (!ok) return;

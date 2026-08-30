@@ -451,6 +451,9 @@ class TopicCommands {
     for (final t in topicRepo.all()) {
       await AttachmentService.instance.deleteAllFor(t.id);
     }
+    // The folder's copies too. Clearing only local files left every attached
+    // video and document sitting in the user's folder after a reset.
+    await BackupService.instance.clearFolderFiles();
 
     final store = StorageService.instance;
     await store.topics.deleteAll(store.topics.keys.toList());

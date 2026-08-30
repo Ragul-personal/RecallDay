@@ -52,13 +52,12 @@ class _SplashPageState extends ConsumerState<SplashPage> {
   }
 
   Future<void> _offerRestore() async {
-    // Two possible sources, checked in order of usefulness:
-    //   • the user's chosen folder — survives an uninstall, so this is the one
-    //     that matters after reinstalling;
-    //   • the app-private snapshot — only survives "clear app data".
-    final fromFolder = await BackupService.instance.folderHasBackup();
-    final fromApp = await BackupService.instance.hasAutoBackup();
-    if (!fromFolder && !fromApp) return;
+    // Offered only when a backup actually holds subjects or topics.
+    //
+    // This used to test whether the snapshot FILE existed, which is a
+    // different question: after a reset the file is still there, holding empty
+    // lists, so the app asked to restore nothing on every launch forever.
+    if (!await BackupService.instance.hasRestorableBackup()) return;
     if (!mounted) return;
 
     final restore = await showDialog<bool>(
@@ -66,12 +65,9 @@ class _SplashPageState extends ConsumerState<SplashPage> {
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('Restore your data?'),
-        content: Text(
-          fromFolder
-              ? 'No topics found, but there is a RecallDay backup in the '
-                  'folder you chose. Would you like to restore it?'
-              : 'No topics found, but RecallDay has a saved copy on this '
-                  'device. Would you like to restore it?',
+        content: const Text(
+          'No topics found, but RecallDay has a saved backup. Would you like '
+          'to restore it?',
         ),
         actions: [
           TextButton(
@@ -88,9 +84,7 @@ class _SplashPageState extends ConsumerState<SplashPage> {
     if (restore != true) return;
 
     if (mounted) setState(() => _status = 'Restoring…');
-    final summary = fromFolder
-        ? await BackupService.instance.restoreFromFolder()
-        : await BackupService.instance.autoRestoreIfEmpty();
+    final summary = await BackupService.instance.restoreBest();
     if (summary == null || summary.isEmpty) {
       if (mounted) setState(() => _status = 'Nothing to restore');
       await Future<void>.delayed(const Duration(milliseconds: 700));

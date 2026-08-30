@@ -432,13 +432,60 @@ class BackupService {
     }
   }
 
-  /// Whether the chosen folder holds anything restorable.
-  Future<bool> folderHasBackup() async {
+  /// Delete every attachment the folder holds.
+  ///
+  /// Reset used to clear the database and rewrite an empty snapshot, but never
+  /// touched RecallDay-files/, so every video and document the user had
+  /// attached stayed in their folder forever after a "delete everything".
+  Future<void> clearFolderFiles() async {
     final saf = SafService.instance;
-    if (!await saf.hasAccess()) return false;
-    return await saf.hasFile(_folderData) ||
-        await saf.hasFile(_legacyFolderZip);
+    if (!await saf.hasAccess()) return;
+    for (final rel in await saf.listAt(_folderFiles)) {
+      await saf.deleteAt('$_folderFiles/$rel');
+    }
   }
+
+  /// Whether a snapshot actually contains something worth restoring.
+  ///
+  /// File existence is not the same question. After a reset the snapshot is
+  /// still on disk — it just holds empty lists — so testing for the file made
+  /// the app offer to restore nothing, on every single launch, forever.
+  bool _hasContent(String json) {
+    try {
+      final m = jsonDecode(json) as Map<String, dynamic>;
+      final subjects = (m['subjects'] as List?)?.length ?? 0;
+      final topics = (m['topics'] as List?)?.length ?? 0;
+      return subjects > 0 || topics > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// True only when there is real data to bring back.
+  Future<bool> hasRestorableBackup() async {
+    final saf = SafService.instance;
+    if (await saf.hasAccess()) {
+      final json = await saf.readFile(_folderData);
+      if (json != null && _hasContent(utf8.decode(json))) return true;
+      // A legacy archive can't be inspected cheaply; assume it's worth asking.
+      if (await saf.hasFile(_legacyFolderZip)) return true;
+    }
+    try {
+      final f = await _autoFile();
+      if (await f.exists() && _hasContent(await f.readAsString())) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  /// Restore from whichever source has data: the chosen folder first, since it
+  /// is the copy that survives a reinstall, then the app-private snapshot.
+  Future<RestoreSummary?> restoreBest({bool merge = true}) async {
+    final fromFolder = await restoreFromFolder(merge: merge);
+    if (fromFolder != null && !fromFolder.isEmpty) return fromFolder;
+    return autoRestoreIfEmpty();
+  }
+
+
 
   /// Write now and report. Used on app background and by Settings.
   Future<BackupResult> flush() async {
@@ -465,14 +512,7 @@ class BackupService {
     }
   }
 
-  /// Whether there is an automatic snapshot worth offering to restore.
-  Future<bool> hasAutoBackup() async {
-    try {
-      return await (await _autoFile()).exists();
-    } catch (_) {
-      return false;
-    }
-  }
+
 
   // ------------------------------------------------------------------ export
 

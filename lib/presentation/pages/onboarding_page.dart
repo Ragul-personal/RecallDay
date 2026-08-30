@@ -104,7 +104,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
         await _details(
           'Nothing was restored',
           'That file was read but held no subjects or topics. Please pick your '
-          'RecallDay backup .zip.',
+          'RecallDay backup file.',
         );
       } else {
         setState(() => _restoredSummary = summary.toString());
@@ -256,8 +256,8 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
       key: const ValueKey('existingImport'),
       icon: Icons.file_open_outlined,
       title: 'Select your backup file',
-      body: 'Choose the RecallDay backup you saved — a .zip holding your '
-          'subjects, topics and attachments.\n\n'
+      body: 'Choose the RecallDay backup file you exported — it holds your '
+          'subjects, topics, review history and attachments.\n\n'
           'It is only read, never changed. Your original file stays exactly '
           'where it is.',
       onBack: () => _go(_Step.welcome),
@@ -282,7 +282,9 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      done ? _restoredSummary! : 'Required — tap to choose your .zip',
+                      done
+                          ? _restoredSummary!
+                          : 'Required — tap to choose your backup file',
                       style: tt.labelSmall,
                     ),
                   ],
