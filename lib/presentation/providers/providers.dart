@@ -264,6 +264,9 @@ class TopicCommands {
     await NotificationService.instance
         .scheduleForTopic(topic, subjectName: _subjectName(subjectId));
     _backup();
+    for (final a in attachments.where((a) => a.isLocalFile)) {
+      unawaited(BackupService.instance.syncAttachment(id, a.target));
+    }
     return topic;
   }
 
@@ -465,8 +468,26 @@ class TopicCommands {
     final repo = ref.read(topicRepositoryProvider);
     final t = repo.byId(topicId);
     if (t == null) return;
+
+    final before = {for (final a in t.attachments) a.id: a};
+    final after = {for (final a in attachments) a.id: a};
+
     await repo.upsert(t.copyWith(attachments: attachments));
     _backup();
+
+    // Copy each new file across once, and drop removed ones. Attachments are
+    // immutable, so this is the only time their bytes ever move — the folder
+    // copy is never rebuilt wholesale.
+    for (final a in after.values) {
+      if (before.containsKey(a.id) || !a.isLocalFile) continue;
+      unawaited(BackupService.instance.syncAttachment(topicId, a.target));
+    }
+    for (final a in before.values) {
+      if (after.containsKey(a.id) || !a.isLocalFile) continue;
+      unawaited(
+        BackupService.instance.removeAttachmentFromFolder(topicId, a.target),
+      );
+    }
   }
 
   Future<void> snoozeTopic(String topicId, Duration by) async {
@@ -508,6 +529,7 @@ class TopicCommands {
     // Attached files live outside Hive, so they'd otherwise sit on disk
     // forever after the topic that referenced them is gone.
     await AttachmentService.instance.deleteAllFor(topicId);
+    unawaited(BackupService.instance.removeTopicFilesFromFolder(topicId));
     await NotificationService.instance.cancelForTopic(topicId);
     _backup();
   }
@@ -522,6 +544,7 @@ class TopicCommands {
       await topicRepo.delete(t.id);
       await topicRepo.deleteReviewsForTopic(t.id);
       await AttachmentService.instance.deleteAllFor(t.id);
+      unawaited(BackupService.instance.removeTopicFilesFromFolder(t.id));
       await NotificationService.instance.cancelForTopic(t.id);
     }
     await subjectRepo.delete(subjectId);

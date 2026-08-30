@@ -70,6 +70,31 @@ class MainActivity : FlutterActivity() {
                         call.argument<String>("newName"),
                     )
                 )
+                // Streaming variants. Large media must never cross the method
+                // channel as a byte array: a 64 MB video is copied on the Dart
+                // side and again here, and that alone was enough to push the
+                // process past its heap limit and get it killed.
+                "copyIn" -> result.success(
+                    copyIn(
+                        call.argument<String>("uri"),
+                        call.argument<String>("path"),
+                        call.argument<String>("src"),
+                        call.argument<String>("mime") ?: "application/octet-stream",
+                    )
+                )
+                "copyOut" -> result.success(
+                    copyOut(
+                        call.argument<String>("uri"),
+                        call.argument<String>("path"),
+                        call.argument<String>("dest"),
+                    )
+                )
+                "deleteAt" -> result.success(
+                    deleteAt(call.argument<String>("uri"), call.argument<String>("path"))
+                )
+                "listAt" -> result.success(
+                    listAt(call.argument<String>("uri"), call.argument<String>("path"))
+                )
                 "release" -> result.success(release(call.argument<String>("uri")))
                 else -> result.notImplemented()
             }
@@ -210,6 +235,114 @@ class MainActivity : FlutterActivity() {
         val tree = DocumentFile.fromTreeUri(this, Uri.parse(uriString)) ?: return false
         val file = tree.findFile(name) ?: return false
         return file.renameTo(newName)
+    }
+
+    // --------------------------------------------------------- nested paths
+
+    /**
+     * Walk (optionally creating) a `a/b/c` path under the tree.
+     *
+     * Attachments live in per-topic subfolders, so the flat findFile() used by
+     * the byte-array helpers isn't enough on its own.
+     */
+    private fun resolveDir(
+        tree: DocumentFile,
+        segments: List<String>,
+        create: Boolean,
+    ): DocumentFile? {
+        var cur = tree
+        for (seg in segments) {
+            if (seg.isEmpty()) continue
+            val found = cur.findFile(seg)
+            cur = when {
+                found != null && found.isDirectory -> found
+                create -> cur.createDirectory(seg) ?: return null
+                else -> return null
+            }
+        }
+        return cur
+    }
+
+    private fun treeOf(uriString: String?): DocumentFile? {
+        if (uriString.isNullOrEmpty()) return null
+        return DocumentFile.fromTreeUri(this, Uri.parse(uriString))
+    }
+
+    /**
+     * Stream a local file into the folder at [path] (`dir/sub/name.ext`).
+     *
+     * Copied in 64 KB chunks, so memory stays flat regardless of file size —
+     * a 50 MB video costs the same as a 5 KB note.
+     */
+    private fun copyIn(uriString: String?, path: String?, src: String?, mime: String): Boolean {
+        if (path.isNullOrEmpty() || src.isNullOrEmpty()) return false
+        val tree = treeOf(uriString) ?: return false
+        val parts = path.split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return false
+
+        val dir = resolveDir(tree, parts.dropLast(1), create = true) ?: return false
+        val name = parts.last()
+        val target = dir.findFile(name) ?: dir.createFile(mime, name) ?: return false
+
+        val source = java.io.File(src)
+        if (!source.exists()) return false
+
+        contentResolver.openOutputStream(target.uri, "wt").use { out ->
+            if (out == null) return false
+            source.inputStream().use { input -> input.copyTo(out, DEFAULT_BUFFER_SIZE) }
+            out.flush()
+        }
+        return true
+    }
+
+    /** Stream a file out of the folder into a local path. */
+    private fun copyOut(uriString: String?, path: String?, dest: String?): Boolean {
+        if (path.isNullOrEmpty() || dest.isNullOrEmpty()) return false
+        val tree = treeOf(uriString) ?: return false
+        val parts = path.split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return false
+
+        val dir = resolveDir(tree, parts.dropLast(1), create = false) ?: return false
+        val file = dir.findFile(parts.last()) ?: return false
+        if (!file.exists() || !file.canRead()) return false
+
+        val out = java.io.File(dest)
+        out.parentFile?.mkdirs()
+        contentResolver.openInputStream(file.uri).use { input ->
+            if (input == null) return false
+            out.outputStream().use { sink -> input.copyTo(sink, DEFAULT_BUFFER_SIZE) }
+        }
+        return true
+    }
+
+    private fun deleteAt(uriString: String?, path: String?): Boolean {
+        if (path.isNullOrEmpty()) return false
+        val tree = treeOf(uriString) ?: return false
+        val parts = path.split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return false
+        val dir = resolveDir(tree, parts.dropLast(1), create = false) ?: return false
+        return dir.findFile(parts.last())?.delete() ?: false
+    }
+
+    /** Relative paths of every file under [path], recursively. */
+    private fun listAt(uriString: String?, path: String?): List<String> {
+        val tree = treeOf(uriString) ?: return emptyList()
+        val parts = (path ?: "").split('/').filter { it.isNotEmpty() }
+        val dir = resolveDir(tree, parts, create = false) ?: return emptyList()
+
+        val out = mutableListOf<String>()
+        fun walk(d: DocumentFile, prefix: String) {
+            for (child in d.listFiles()) {
+                val name = child.name ?: continue
+                if (child.isDirectory) {
+                    walk(child, "$prefix$name/")
+                } else {
+                    out.add("$prefix$name")
+                }
+            }
+        }
+        walk(dir, "")
+        return out
     }
 
     private fun readFile(uriString: String?, name: String?): ByteArray? {
