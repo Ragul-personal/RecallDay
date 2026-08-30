@@ -2,12 +2,13 @@ import 'package:equatable/equatable.dart';
 
 import 'attachment.dart';
 
-/// User self-rating after a review session. Drives the SM-2-derived ease update.
+/// User self-rating after a review session. Drives the ease update; only
+/// `forgot` and `easy` change the schedule itself (see [SpacedRepetitionEngine]).
 enum ReviewRating {
-  forgot,   // failed recall — restart interval, decrease ease
-  hard,     // recalled with difficulty — small interval growth, lower ease
-  good,     // standard — multiply by ease factor
-  easy,     // very confident — multiply by ease factor * easyBonus
+  forgot,   // failed recall — rewind to the first rung, decrease ease
+  hard,     // recalled with difficulty — lower ease, same rung as good
+  good,     // standard — advance one rung
+  easy,     // very confident — skip a rung, raise ease
 }
 
 enum TopicStatus {
@@ -19,12 +20,14 @@ enum TopicStatus {
 enum Difficulty { easy, medium, hard }
 enum Priority { low, medium, high }
 
-/// SR state lives on the Topic. We use a hybrid scheduler:
-///   • While `repetitions == 0`, we use the user-configured fixed interval
-///     ladder (default Leitner: 1d, 3d, 7d, 15d, 30d, 60d, 90d).
-///   • Once `repetitions >= 2`, we switch to SM-2: next = lastInterval * ease.
+/// SR state lives on the Topic. The scheduler walks a fixed interval ladder
+/// (default Leitner: 1d, 3d, 7d, 14d, 30d) and then holds on the last rung, so
+/// revisions settle at one a month rather than growing without bound.
+///   • [ladderIndex] is the current rung; it never exceeds the ladder's length.
 ///   • A "forgot" rating at any stage resets repetitions to 0 and rewinds to
 ///     the first ladder rung, but preserves an attenuated ease factor.
+///   • [ease] and [currentIntervalDays] are still recorded on every review;
+///     ease no longer feeds the interval.
 class Topic extends Equatable {
   final String id;
   final String subjectId;

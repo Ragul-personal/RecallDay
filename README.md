@@ -83,21 +83,33 @@ Two boundaries worth knowing:
 ## Spaced repetition
 
 `SpacedRepetitionEngine` (`lib/domain/usecases/`) is a pure function — no I/O,
-fully unit-tested — with two phases:
+fully unit-tested. It walks a fixed ladder `[1, 3, 7, 14, 30]` days and then
+holds:
 
-1. **Bootstrap** (`repetitions < 2`): walks a fixed ladder `[1, 3, 7, 15, 30,
-   60, 90]` days.
-2. **Steady state** (`repetitions ≥ 2`): SM-2-style
-   `next = currentInterval × ease × ratingMultiplier`.
+```
+tomorrow → 3d → 7d → 14d → 30d → 30d → 30d → …
+```
+
+The top rung is a **plateau**, not a stop: once a topic reaches it, every later
+revision falls one more month out. That behaviour is not a special case in the
+code — the same `math.min(index + advance, ladder.length - 1)` clamp that stops
+the walk overrunning the ladder is what parks it on the last rung.
 
 The day a topic is created is its first exposure, not a revision — the first
 revision lands one ladder step later.
 
 > **Note on ease.** The engine models four ratings with per-rating ease deltas,
-> but the UI now records a single neutral "Done", so in practice ease stays at
-> its default and intervals follow the ladder. The grading model is kept
-> deliberately: it is pure, tested, and the natural place to reintroduce
-> difficulty-aware scheduling.
+> but the UI records a single neutral "Done", so every real review arrives as
+> `good`. Ease is still updated and stored on each `Review`; it no longer feeds
+> the interval. The grading model is kept deliberately: it is pure, tested, and
+> the natural place to reintroduce difficulty-aware scheduling.
+
+> **Why the plateau.** This replaced an SM-2 steady state
+> (`interval × ease × ratingMultiplier`, capped at 730 days). With ease pinned
+> at its 2.5 default it produced 7 → 18 → 45 → 113 → 282 days, drifting
+> revisions years apart. Topics carrying a `ladderIndex` from the older
+> `[1, 3, 7, 15, 30, 60, 90]` ladder need no migration: the clamp absorbs the
+> stale index and lands them on the monthly step at their next review.
 
 ```bash
 flutter test    # engine invariants

@@ -3,25 +3,29 @@ import '../entities/topic.dart';
 
 /// Pure scheduling engine. No I/O, no platform calls — fully unit-testable.
 ///
-/// Hybrid policy:
-///   • Bootstrap phase (repetitions < 2): walk a fixed Leitner-style ladder.
-///     Default: [1, 3, 7, 15, 30, 60, 90] days.
-///   • Steady state (repetitions ≥ 2): SM-2-derived
-///         next = round(currentInterval * easeFactor * ratingMultiplier)
-///   • "Forgot" rating always rewinds to ladder index 0 with a damped ease
-///     reduction; we never let ease drop below [easeFloor].
+/// Policy: walk a fixed Leitner-style ladder, then hold.
+///   • Default ladder: [1, 3, 7, 14, 30] days — the first month is a ramp.
+///   • The top rung is a *plateau*, not a stop. Once a topic reaches it, every
+///     later revision falls one more month out; intervals never grow past it.
+///   • "Forgot" rewinds to ladder index 0 with a damped ease reduction; ease
+///     never drops below [easeFloor].
 ///
-/// Why hybrid? Pure SM-2 needs ≥1 successful review to compute meaningful
-/// next intervals; for a brand-new topic we want the explicit "1d → 3d → 7d"
-/// the user expects. Hybrid lets us honor user-chosen ladders while still
-/// getting adaptive lengthening for well-known topics.
+/// The plateau falls out of the clamp in [schedule] rather than needing a
+/// branch of its own: `math.min(index + advance, ladder.length - 1)` parks on
+/// the last rung and keeps returning it.
+///
+/// This replaced an SM-2 steady state (`interval × ease × ratingMultiplier`,
+/// capped at 730 days). Because the UI records a single neutral "Done", every
+/// real review arrived as `good` with ease pinned at its 2.5 default, so that
+/// phase only ever produced 7 → 18 → 45 → 113 → 282 days — revisions drifting
+/// years apart, which is not what a reminder app is for. Ease is still tracked
+/// and recorded on every review, so difficulty-aware scheduling can come back
+/// without reconstructing the state it needs.
 class SpacedRepetitionEngine {
-  static const List<int> defaultLadder = [1, 3, 7, 15, 30, 60, 90];
+  static const List<int> defaultLadder = [1, 3, 7, 14, 30];
 
   static const double easeFloor = 1.3;
   static const double easeCeiling = 3.0;
-  static const double easyBonus = 1.30;
-  static const double hardPenalty = 0.85;
 
   final List<int> ladder;
 
@@ -50,24 +54,16 @@ class SpacedRepetitionEngine {
       nextLadderIndex = 0;
       nextRepetitions = 0;
       nextIntervalDays = ladder.first;
-    } else if (topic.repetitions < 2) {
-      // Bootstrap: advance one rung on the ladder. "Easy" skips a rung.
+    } else {
+      // Advance one rung. "Easy" skips a rung. The clamp is what creates the
+      // monthly plateau: once on the last rung it returns that rung forever.
+      //
+      // It also absorbs a stale index. Topics written by the old 7-rung ladder
+      // carry a ladderIndex of up to 6, so the read below would otherwise be
+      // out of range; clamped, such a topic simply lands on the monthly step.
       final advance = rating == ReviewRating.easy ? 2 : 1;
       nextLadderIndex = math.min(topic.ladderIndex + advance, ladder.length - 1);
       nextIntervalDays = ladder[nextLadderIndex];
-      nextRepetitions = topic.repetitions + 1;
-    } else {
-      // Steady state: SM-2 multiplicative growth.
-      final base = topic.currentIntervalDays > 0
-          ? topic.currentIntervalDays
-          : ladder.last;
-      final mult = switch (rating) {
-        ReviewRating.easy => newEase * easyBonus,
-        ReviewRating.good => newEase,
-        ReviewRating.hard => newEase * hardPenalty,
-        ReviewRating.forgot => 1.0, // unreachable, handled above
-      };
-      nextIntervalDays = (base * mult).round().clamp(1, 365 * 2);
       nextRepetitions = topic.repetitions + 1;
     }
 
@@ -116,24 +112,28 @@ class SpacedRepetitionEngine {
     );
   }
 
-  /// Projected future due dates for a topic, walked optimistically along the
-  /// ladder (assumes every review is "good" and on time).
+  /// Projected future due dates for a topic, walked along the ladder (assumes
+  /// every review happens on time).
   ///
-  /// IMPORTANT: these are display-only projections, not real schedules. After
-  /// each actual review the engine recomputes [Topic.nextDueAt] adaptively
-  /// using SM-2 ease, so dates beyond the first will shift in practice.
-  /// Used by the calendar view to show the user "what their plan looks like".
+  /// IMPORTANT: these are display-only projections, not real schedules — the
+  /// calendar view uses them to show the user "what their plan looks like". A
+  /// "forgot" rewinds to the first rung, so they are a best case.
   ///
-  /// Returns at most [count] entries, including the current [topic.nextDueAt]
-  /// as the first entry. For a fresh topic (ladderIndex=0, default ladder),
-  /// the projection is roughly: today, +3d, +10d, +25d, +55d, +115d, +205d.
+  /// Returns [count] entries, including the current [topic.nextDueAt] as the
+  /// first. For a fresh topic on the default ladder: due date, +3d, +7d, +14d,
+  /// then one every 30 days.
+  ///
+  /// The walk continues on the top rung instead of stopping at the end of the
+  /// ladder. Stopping would leave a topic that had reached the monthly step
+  /// projecting a single date, and the calendar ahead of it empty.
   List<DateTime> projectFutureDueDates(Topic topic, {int count = 8}) {
-    if (topic.status != TopicStatus.active) return const [];
+    if (topic.status != TopicStatus.active || count <= 0) return const [];
     final dates = <DateTime>[topic.nextDueAt];
     var anchor = topic.nextDueAt;
-    var idx = topic.ladderIndex;
-    while (dates.length < count && idx + 1 < ladder.length) {
-      idx++;
+    // Clamped: topics written by the old 7-rung ladder carry a stale index.
+    var idx = math.min(topic.ladderIndex, ladder.length - 1);
+    while (dates.length < count) {
+      idx = math.min(idx + 1, ladder.length - 1);
       anchor = DateTime(anchor.year, anchor.month, anchor.day,
               topic.reminderHour, topic.reminderMinute)
           .add(Duration(days: ladder[idx]));

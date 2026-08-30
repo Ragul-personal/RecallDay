@@ -22,7 +22,7 @@ Topic _seed({
 }
 
 void main() {
-  group('SpacedRepetitionEngine — bootstrap (reps < 2)', () {
+  group('SpacedRepetitionEngine — climbing the ladder', () {
     const engine = SpacedRepetitionEngine();
     final ref = DateTime(2024, 1, 1, 12);
 
@@ -59,39 +59,89 @@ void main() {
     });
   });
 
-  group('SpacedRepetitionEngine — steady state (reps ≥ 2)', () {
+  group('SpacedRepetitionEngine — monthly plateau (top rung)', () {
     const engine = SpacedRepetitionEngine();
     final ref = DateTime(2024, 1, 1, 12);
+    final topRung = SpacedRepetitionEngine.defaultLadder.length - 1;
+    final month = SpacedRepetitionEngine.defaultLadder.last;
 
-    test('"good" multiplies current interval by ease', () {
-      final t = _seed(reps: 2, ease: 2.5, currentInterval: 7);
+    test('a review on the top rung stays on it, one month out', () {
+      final t = _seed(reps: 4, ladderIdx: topRung, currentInterval: month);
       final r = engine.schedule(t, ReviewRating.good, now: ref);
-      expect(r.nextIntervalDays, (7 * 2.5).round()); // 18
-      expect(r.newEase, closeTo(2.5, 0.001));
+      expect(r.nextLadderIndex, topRung);
+      expect(r.nextIntervalDays, month);
+      expect(r.nextRepetitions, 5);
     });
 
-    test('"hard" applies ease - 0.15 and a hard penalty', () {
-      final t = _seed(reps: 2, ease: 2.5, currentInterval: 10);
-      final r = engine.schedule(t, ReviewRating.hard, now: ref);
-      expect(r.newEase, closeTo(2.35, 0.001));
-      // 10 * 2.35 * 0.85 ≈ 19.97 → 20
-      expect(r.nextIntervalDays, 20);
+    test('every rating gives the same month once on the plateau', () {
+      final t = _seed(reps: 4, ladderIdx: topRung, currentInterval: month);
+      for (final rating in [
+        ReviewRating.good,
+        ReviewRating.hard,
+        ReviewRating.easy,
+      ]) {
+        expect(engine.schedule(t, rating, now: ref).nextIntervalDays, month);
+      }
     });
 
-    test('"easy" applies easy bonus', () {
-      final t = _seed(reps: 2, ease: 2.5, currentInterval: 10);
-      final r = engine.schedule(t, ReviewRating.easy, now: ref);
-      // ease + 0.15 = 2.65; 10 * 2.65 * 1.30 = 34.45 → 34
-      expect(r.newEase, closeTo(2.65, 0.001));
-      expect(r.nextIntervalDays, 34);
+    test('ease is still tracked on the plateau even though it moves nothing',
+        () {
+      final t = _seed(reps: 4, ease: 2.5, ladderIdx: topRung);
+      expect(
+        engine.schedule(t, ReviewRating.hard, now: ref).newEase,
+        closeTo(2.35, 0.001),
+      );
+      expect(
+        engine.schedule(t, ReviewRating.easy, now: ref).newEase,
+        closeTo(2.65, 0.001),
+      );
     });
 
-    test('"forgot" resets ladder + drops ease but stays above floor', () {
-      final t = _seed(reps: 5, ease: 1.4, currentInterval: 60);
+    test('"forgot" from the plateau rewinds to day 1', () {
+      final t = _seed(
+        reps: 9,
+        ease: 1.4,
+        ladderIdx: topRung,
+        currentInterval: month,
+      );
       final r = engine.schedule(t, ReviewRating.forgot, now: ref);
       expect(r.newEase, SpacedRepetitionEngine.easeFloor);
       expect(r.nextLadderIndex, 0);
       expect(r.nextIntervalDays, 1);
+      expect(r.nextRepetitions, 0);
+    });
+
+    // Topics saved by the old [1,3,7,15,30,60,90] ladder carry an index that is
+    // out of range for the current one. The clamp must absorb it rather than
+    // throwing, and land the topic on the monthly step.
+    test('a stale ladder index from the old ladder lands on the month', () {
+      final t = _seed(reps: 6, ladderIdx: 6, currentInterval: 90);
+      final r = engine.schedule(t, ReviewRating.good, now: ref);
+      expect(r.nextLadderIndex, topRung);
+      expect(r.nextIntervalDays, month);
+    });
+  });
+
+  group('SpacedRepetitionEngine — full schedule', () {
+    const engine = SpacedRepetitionEngine();
+    final ref = DateTime(2024, 1, 1, 12);
+
+    test('runs 1 → 3 → 7 → 14 → 30 and then holds at one month', () {
+      var t = _seed();
+      final intervals = <int>[
+        engine.initialSchedule(t, now: ref).nextIntervalDays,
+      ];
+      for (var i = 0; i < 6; i++) {
+        final r = engine.schedule(t, ReviewRating.good, now: ref);
+        intervals.add(r.nextIntervalDays);
+        t = t.copyWith(
+          repetitions: r.nextRepetitions,
+          ease: r.newEase,
+          currentIntervalDays: r.nextIntervalDays,
+          ladderIndex: r.nextLadderIndex,
+        );
+      }
+      expect(intervals, [1, 3, 7, 14, 30, 30, 30]);
     });
   });
 
@@ -108,17 +158,23 @@ void main() {
       }
     });
 
-    test('intervals are clamped to <= 730 days', () {
-      var t = _seed(reps: 5, ease: 3.0, currentInterval: 365);
-      for (var i = 0; i < 5; i++) {
+    // Replaces an older "clamped to <= 730 days" check. Growth is gone, so the
+    // invariant is now the ceiling itself: no run of reviews, at any rating,
+    // can push an interval past the top rung.
+    test('no interval ever exceeds the top rung', () {
+      final month = SpacedRepetitionEngine.defaultLadder.last;
+      var t = _seed(reps: 5, ease: 3.0);
+      for (var i = 0; i < 20; i++) {
         final r = engine.schedule(t, ReviewRating.easy, now: ref);
         t = t.copyWith(
           repetitions: r.nextRepetitions,
           ease: r.newEase,
           currentIntervalDays: r.nextIntervalDays,
+          ladderIndex: r.nextLadderIndex,
         );
-        expect(r.nextIntervalDays, lessThanOrEqualTo(730));
+        expect(r.nextIntervalDays, lessThanOrEqualTo(month));
       }
+      expect(t.currentIntervalDays, month);
     });
   });
 
