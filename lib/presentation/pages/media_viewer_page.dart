@@ -20,18 +20,19 @@ import '../../domain/entities/attachment.dart';
 Future<String?> openAttachment(BuildContext context, Attachment a) async {
   switch (a.kind) {
     case AttachmentKind.image:
-      if (!await File(a.target).exists()) return 'That file is missing.';
-      if (!context.mounted) return null;
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => _ImageViewer(attachment: a)),
-      );
-      return null;
-
     case AttachmentKind.video:
       if (!await File(a.target).exists()) return 'That file is missing.';
+      // Formats Flutter and ExoPlayer can't decode — HEIC photos, AVI clips —
+      // go straight to the system, which has the codecs. Opening our own
+      // viewer just to show an error would be worse than not offering it.
+      if (!a.rendersInApp) return _openExternally(a);
       if (!context.mounted) return null;
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => _VideoViewer(attachment: a)),
+        MaterialPageRoute<void>(
+          builder: (_) => a.kind == AttachmentKind.image
+              ? _ImageViewer(attachment: a)
+              : _VideoViewer(attachment: a),
+        ),
       );
       return null;
 
@@ -48,11 +49,7 @@ Future<String?> openAttachment(BuildContext context, Attachment a) async {
 
     case AttachmentKind.file:
       if (!await File(a.target).exists()) return 'That file is missing.';
-      final r = await OpenFilex.open(a.target);
-      if (r.type == ResultType.done) return null;
-      return r.type == ResultType.noAppToOpen
-          ? 'No app on this phone can open ${a.name}.'
-          : 'Could not open the file (${r.message}).';
+      return _openExternally(a);
 
     case AttachmentKind.link:
       final uri = Uri.tryParse(a.target);
@@ -60,6 +57,63 @@ Future<String?> openAttachment(BuildContext context, Attachment a) async {
       final ok =
           await launchUrl(uri, mode: LaunchMode.externalApplication);
       return ok ? null : 'No browser could open that link.';
+  }
+}
+
+/// Hand a file to whichever installed app claims its type.
+Future<String?> _openExternally(Attachment a) async {
+  final r = await OpenFilex.open(a.target);
+  if (r.type == ResultType.done) return null;
+  return r.type == ResultType.noAppToOpen
+      ? 'No app on this phone can open ${a.name}.'
+      : 'Could not open ${a.name} (${r.message}).';
+}
+
+/// Shown when in-app playback or decoding fails despite our checks.
+///
+/// A codec can be missing on a particular device even for a container we
+/// expect to work, so every viewer keeps this escape hatch rather than
+/// dead-ending on an error message.
+class _OpenExternallyFallback extends StatelessWidget {
+  final Attachment attachment;
+  final String message;
+
+  const _OpenExternallyFallback({
+    required this.attachment,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.xxl),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.error_outline_rounded,
+              color: Colors.white70, size: 34),
+          const SizedBox(height: AppSpacing.lg),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          FilledButton.icon(
+            icon: const Icon(Icons.open_in_new_rounded, size: 19),
+            label: const Text('Open with another app'),
+            onPressed: () async {
+              final err = await _openExternally(attachment);
+              if (err != null && context.mounted) {
+                ScaffoldMessenger.of(context)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(SnackBar(content: Text(err)));
+              }
+            },
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -89,9 +143,9 @@ class _ImageViewer extends StatelessWidget {
           child: Image.file(
             File(attachment.target),
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Text(
-              'Could not display this image.',
-              style: TextStyle(color: Colors.white70),
+            errorBuilder: (_, __, ___) => _OpenExternallyFallback(
+              attachment: attachment,
+              message: 'This image could not be displayed here.',
             ),
           ),
         ),
@@ -124,7 +178,7 @@ class _VideoViewerState extends State<_VideoViewer> {
       c.play();
     }).catchError((Object e) {
       if (!mounted) return;
-      setState(() => _error = 'This video could not be played.\n$e');
+      setState(() => _error = 'This video could not be played here.');
     });
   }
 
@@ -153,13 +207,9 @@ class _VideoViewerState extends State<_VideoViewer> {
       ),
       body: Center(
         child: _error != null
-            ? Padding(
-                padding: const EdgeInsets.all(AppSpacing.xl),
-                child: Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70),
-                ),
+            ? _OpenExternallyFallback(
+                attachment: widget.attachment,
+                message: _error!,
               )
             : !ready
                 ? const CircularProgressIndicator()

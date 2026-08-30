@@ -98,14 +98,54 @@ class Attachment {
   static AttachmentKind kindForUrl(String url) =>
       youTubeId(url) != null ? AttachmentKind.youtube : AttachmentKind.link;
 
+  static String extensionOf(String path) =>
+      path.contains('.') ? path.split('.').last.toLowerCase() : '';
+
   /// Classify a file by extension.
+  ///
+  /// This decides the icon and label, so it follows what the file *is* — a
+  /// HEIC is an image whether or not the app can draw it. Whether it opens
+  /// in-app is a separate question; see [rendersInApp].
   static AttachmentKind kindForPath(String path) {
-    final ext = path.contains('.') ? path.split('.').last.toLowerCase() : '';
-    const images = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'};
-    const videos = {'mp4', 'mov', 'mkv', 'avi', 'webm', '3gp', 'm4v'};
+    final ext = extensionOf(path);
+    const images = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'wbmp', 'heic',
+        'heif', 'avif', 'tiff', 'tif', 'svg'};
+    const videos = {'mp4', 'mov', 'mkv', 'avi', 'webm', '3gp', 'm4v', 'wmv',
+        'flv', 'mpg', 'mpeg', 'ts'};
     if (images.contains(ext)) return AttachmentKind.image;
     if (videos.contains(ext)) return AttachmentKind.video;
     return AttachmentKind.file;
+  }
+
+  /// Formats Flutter's own `Image` widget can decode.
+  ///
+  /// Notably missing: HEIC/HEIF — the default camera format on a lot of phones
+  /// — plus AVIF, TIFF and SVG. Trying to draw one shows an error where a
+  /// photo should be, so those are handed to the phone's gallery instead,
+  /// which decodes them natively.
+  static const Set<String> _flutterImages = {
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'wbmp',
+  };
+
+  /// Containers ExoPlayer handles on Android. AVI, WMV and FLV are not among
+  /// them, so those go to whichever video app the user has.
+  static const Set<String> _androidVideos = {
+    'mp4', 'm4v', 'mkv', 'webm', '3gp', 'mov', 'ts',
+  };
+
+  /// Whether the app's own viewer can actually display this file.
+  ///
+  /// When false the file still opens — just handed to the system, which has
+  /// codecs Flutter doesn't ship. Checking up front beats showing the user a
+  /// broken viewer and asking them to back out of it.
+  bool get rendersInApp {
+    final ext = extensionOf(target);
+    return switch (kind) {
+      AttachmentKind.image => _flutterImages.contains(ext),
+      AttachmentKind.video => _androidVideos.contains(ext),
+      AttachmentKind.youtube => true,
+      _ => false,
+    };
   }
 
   /// Extracts a YouTube video id from the URL forms people actually paste:

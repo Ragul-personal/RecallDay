@@ -235,20 +235,61 @@ class BackupService {
     return copied;
   }
 
+  /// Best-guess MIME type for a filename.
+  ///
+  /// Only a hint: it tells the storage provider how to categorise the file and
+  /// helps the phone pick a handler when opening it. Anything unrecognised
+  /// falls back to `application/octet-stream`, which is always accepted — so
+  /// an unknown extension can never stop a file being backed up.
   static String _mimeFor(String name) {
-    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-    return switch (ext) {
+    return switch (Attachment.extensionOf(name)) {
+      // Images
       'jpg' || 'jpeg' => 'image/jpeg',
       'png' => 'image/png',
       'gif' => 'image/gif',
       'webp' => 'image/webp',
+      'bmp' => 'image/bmp',
+      'heic' => 'image/heic',
+      'heif' => 'image/heif',
+      'avif' => 'image/avif',
+      'tif' || 'tiff' => 'image/tiff',
+      'svg' => 'image/svg+xml',
+      // Video
       'mp4' || 'm4v' => 'video/mp4',
       'mov' => 'video/quicktime',
       'mkv' => 'video/x-matroska',
       'webm' => 'video/webm',
+      'avi' => 'video/x-msvideo',
+      '3gp' => 'video/3gpp',
+      'wmv' => 'video/x-ms-wmv',
+      'mpg' || 'mpeg' => 'video/mpeg',
+      // Audio
+      'mp3' => 'audio/mpeg',
+      'm4a' => 'audio/mp4',
+      'wav' => 'audio/wav',
+      'ogg' || 'opus' => 'audio/ogg',
+      'aac' => 'audio/aac',
+      'flac' => 'audio/flac',
+      // Documents
       'pdf' => 'application/pdf',
+      'doc' => 'application/msword',
+      'docx' =>
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls' => 'application/vnd.ms-excel',
+      'xlsx' =>
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'ppt' => 'application/vnd.ms-powerpoint',
+      'pptx' =>
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'epub' => 'application/epub+zip',
+      'rtf' => 'application/rtf',
+      // Text and data
+      'txt' || 'md' => 'text/plain',
+      'csv' => 'text/csv',
+      'html' || 'htm' => 'text/html',
       'json' => 'application/json',
-      'txt' => 'text/plain',
+      'xml' => 'application/xml',
+      'zip' => 'application/zip',
       _ => 'application/octet-stream',
     };
   }
