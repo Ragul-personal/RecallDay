@@ -2,21 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_tokens.dart';
-import '../../domain/entities/attachment.dart';
 import '../../domain/entities/topic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
-import '../widgets/attachment_editor.dart';
 import '../widgets/form_section.dart';
 
-/// Combined Create + Edit page. If [editId] is non-null, loads the topic and
-/// updates only the user-facing fields. SR state (ease, repetitions,
-/// ladderIndex, nextDueAt) is preserved on edit, except that a reminder-time
-/// change rolls nextDueAt forward to the new hour/minute on the same day.
+/// Combined Create + Edit page for a topic.
+///
+/// Deliberately short. A topic is a heading — a name and the subject it lives
+/// in — so there is nothing to schedule and nothing to attach here; all of
+/// that belongs to the subtopics underneath, which is what keeps this form
+/// from turning into a second copy of the subtopic one.
+///
+/// Moving a topic to another subject moves its subtopics with it; see
+/// `TopicCommands.updateTopic`.
 class CreateTopicPage extends ConsumerStatefulWidget {
   final String? initialSubjectId;
   final String? editId;
@@ -29,24 +31,10 @@ class CreateTopicPage extends ConsumerStatefulWidget {
 
 class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
   final _title = TextEditingController();
-  final _notes = TextEditingController();
 
   String? _subjectId;
-  // No longer editable in the form, but still round-tripped so editing a
-  // topic created by an older build doesn't silently reset these fields.
-  Difficulty _difficulty = Difficulty.medium;
-  Priority _priority = Priority.medium;
-  int _minutes = 15;
-  TimeOfDay _reminder = const TimeOfDay(hour: 19, minute: 0);
-  bool _persistent = true;
   bool _busy = false;
   Topic? _existing;
-  List<Attachment> _attachments = const [];
-
-  /// Fixed up front so attachments can be copied into this topic's folder
-  /// while the form is still being filled in.
-  late final String _topicId =
-      widget.editId ?? const Uuid().v4();
 
   bool get _isEdit => widget.editId != null;
 
@@ -59,14 +47,7 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
       if (t != null) {
         _existing = t;
         _title.text = t.title;
-        _notes.text = t.notes ?? '';
         _subjectId = t.subjectId;
-        _difficulty = t.difficulty;
-        _priority = t.priority;
-        _minutes = t.estimatedMinutes;
-        _reminder = TimeOfDay(hour: t.reminderHour, minute: t.reminderMinute);
-        _persistent = t.persistentReminders;
-        _attachments = t.attachments;
       }
     }
   }
@@ -74,7 +55,6 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
   @override
   void dispose() {
     _title.dispose();
-    _notes.dispose();
     super.dispose();
   }
 
@@ -97,44 +77,30 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
     HapticFeedback.lightImpact();
 
     final cmd = ref.read(topicCommandsProvider);
-    final notes = _notes.text.trim().isEmpty ? null : _notes.text.trim();
-
+    String id;
     if (_isEdit) {
+      id = _existing!.id;
       await cmd.updateTopic(
-        topicId: _existing!.id,
+        topicId: id,
         subjectId: _subjectId!,
         title: _title.text.trim(),
-        notes: notes,
-        priority: _priority,
-        difficulty: _difficulty,
-        estimatedMinutes: _minutes,
-        reminderHour: _reminder.hour,
-        reminderMinute: _reminder.minute,
-        persistentReminders: _persistent,
-        attachments: _attachments,
       );
     } else {
-      await cmd.createTopic(
+      final created = await cmd.createTopic(
         subjectId: _subjectId!,
         title: _title.text.trim(),
-        notes: notes,
-        difficulty: _difficulty,
-        priority: _priority,
-        estimatedMinutes: _minutes,
-        reminderHour: _reminder.hour,
-        reminderMinute: _reminder.minute,
-        persistentReminders: _persistent,
-        attachments: _attachments,
-        presetId: _topicId,
       );
+      id = created.id;
     }
-    if (mounted) context.pop();
+    // Popped with the id so a caller that sent the user here mid-form — the
+    // subtopic page, when the subject had no topics yet — can select the topic
+    // that was just made instead of asking for it a second time.
+    if (mounted) context.pop(id);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cs = theme.colorScheme;
     final tt = theme.textTheme;
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
 
@@ -151,12 +117,13 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
           children: [
             FormSection(
               label: 'Topic',
+              hint: 'A chapter, module or theme',
               child: TextField(
                 controller: _title,
                 autofocus: !_isEdit,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
-                  hintText: 'Deadlocks, Krebs cycle, past tense…',
+                  hintText: 'Deadlocks, Cell biology, Verb tenses…',
                 ),
               ),
             ),
@@ -167,9 +134,6 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
                   ? _NoSubjectsNotice(
                       onCreate: () => context.push('/create/subject'),
                     )
-                  // A dropdown rather than chips: it stays one row tall however
-                  // many subjects exist, and `_subjectId` is pre-filled when
-                  // you arrive from inside a subject, so it opens already set.
                   : DropdownButtonFormField<String>(
                       initialValue: _subjectId,
                       isExpanded: true,
@@ -212,110 +176,34 @@ class _CreateTopicPageState extends ConsumerState<CreateTopicPage> {
                     ),
             ),
 
-            FormSection(
-              label: 'Notes',
-              hint: 'Optional · Markdown supported',
-              child: TextField(
-                controller: _notes,
-                maxLines: 4,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
-                  hintText: 'What do you need to remember?',
-                  alignLabelWithHint: true,
-                ),
-              ),
-            ),
-
-            // Reminder time and the persistent-reminder switch are the two
-            // settings that actually change behaviour, so they sit inline
-            // rather than behind a disclosure. Difficulty, priority and
-            // estimated-time were removed entirely: the scheduling engine
-            // never read difficulty or priority, and the minutes figure was
-            // only ever echoed back on the card.
-            FormSection(
-              label: 'Reminder time',
-              child: AppCard(
-                onTap: () async {
-                  final t = await showTimePicker(
-                    context: context,
-                    initialTime: _reminder,
-                  );
-                  if (t != null) setState(() => _reminder = t);
-                },
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.lg,
-                ),
+            if (_isEdit) ...[
+              AppCard(
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Row(
                   children: [
                     Icon(
-                      Icons.schedule_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant,
+                      Icons.info_outline_rounded,
+                      size: 18,
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: AppSpacing.md),
                     Expanded(
                       child: Text(
-                        _reminder.format(context),
-                        style: tt.bodyLarge,
+                        'Changing the subject moves every subtopic in this '
+                        'topic with it.',
+                        style: tt.labelSmall,
                       ),
-                    ),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
                   ],
                 ),
               ),
-            ),
+              const SizedBox(height: AppSpacing.xxl),
+            ],
 
-            FormSection(
-              label: 'Reminders',
-              child: AppCard(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.sm,
-                  AppSpacing.sm,
-                  AppSpacing.sm,
-                ),
-                child: SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: _persistent,
-                  onChanged: (v) => setState(() => _persistent = v),
-                  title: Text('Keep reminding me', style: tt.bodyMedium),
-                  subtitle: Text(
-                    'Re-send daily until the topic is reviewed.',
-                    style: tt.labelSmall,
-                  ),
-                ),
-              ),
-            ),
-
-            FormSection(
-              label: 'Attachments',
-              hint: 'Optional · files, images, videos or links',
-              child: AttachmentEditor(
-                topicId: _topicId,
-                attachments: _attachments,
-                onChanged: (v) => setState(() => _attachments = v),
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.sm),
             FilledButton(
               onPressed: _busy ? null : _save,
               child: Text(_isEdit ? 'Save changes' : 'Create topic'),
             ),
-            if (!_isEdit) ...[
-              const SizedBox(height: AppSpacing.md),
-              Center(
-                child: Text(
-                  'First revision tomorrow at ${_reminder.format(context)}',
-                  style: tt.labelSmall,
-                ),
-              ),
-            ],
           ],
         ),
       ),

@@ -109,7 +109,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
       if (summary.isEmpty) {
         await _details(
           'Nothing was restored',
-          'That backup was read but held no subjects or topics. Pick the '
+          'That backup was read but held nothing to restore. Pick the '
           'file you exported, or the folder you unpacked it into.',
         );
       } else {
@@ -139,7 +139,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     // backup rather than sitting beside each other as rival copies.
     await BackupService.instance.adoptFolder();
 
-    // Restored topics carry no OS alarms, and a new install has none either.
+    // Restored data carries no OS alarms, and a new install has none.
     await ref.read(topicCommandsProvider).reArmAllNotifications();
     if (!mounted) return;
     context.go('/today');

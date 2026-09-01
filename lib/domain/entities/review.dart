@@ -1,10 +1,17 @@
 import 'package:equatable/equatable.dart';
-import 'topic.dart';
+import 'subtopic.dart';
 
-/// Immutable record of one review event. Used for analytics + Firestore sync.
+/// Immutable record of one review event. Drives the streak and the calendar's
+/// view of the past.
+///
+/// [subtopicId] is the field that was called `topicId` before the subtopic
+/// layer existed. The id itself never changed — the records the old build
+/// wrote still point at exactly the right row — so the Hive field index and
+/// the JSON key both keep their historical name; only the Dart identifier
+/// moved. See `ReviewModel`.
 class Review extends Equatable {
   final String id;
-  final String topicId;
+  final String subtopicId;
   final DateTime reviewedAt;
   final ReviewRating rating;
   final int intervalAppliedDays;
@@ -12,7 +19,7 @@ class Review extends Equatable {
 
   const Review({
     required this.id,
-    required this.topicId,
+    required this.subtopicId,
     required this.reviewedAt,
     required this.rating,
     required this.intervalAppliedDays,
@@ -21,5 +28,5 @@ class Review extends Equatable {
 
   @override
   List<Object?> get props =>
-      [id, topicId, reviewedAt, rating, intervalAppliedDays, easeAfter];
+      [id, subtopicId, reviewedAt, rating, intervalAppliedDays, easeAfter];
 }

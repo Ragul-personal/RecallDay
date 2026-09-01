@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
 import '../../core/utils/date_utils.dart';
-import '../../domain/entities/topic.dart';
+import '../../domain/entities/subtopic.dart';
 import '../providers/providers.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/app_card.dart';
@@ -13,9 +13,15 @@ import '../widgets/delete_confirm.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/motion.dart';
 import '../widgets/revise_action.dart';
+import '../widgets/subtopic_card.dart';
 import '../widgets/tab_app_bar.dart';
-import '../widgets/topic_card.dart';
 
+/// The day's work: every subtopic due today, plus anything missed.
+///
+/// Both lists are day-granular and rebuild when the date changes (see
+/// `currentDayProvider`), so a subtopic due at 6am appears here the moment the
+/// clock passes midnight rather than when its reminder fires — including on a
+/// phone that sat on this screen through the small hours.
 class TodayPage extends ConsumerWidget {
   const TodayPage({super.key});
 
@@ -28,6 +34,7 @@ class TodayPage extends ConsumerWidget {
     final overdue = ref.watch(overdueProvider);
     final streak = ref.watch(streakDaysProvider);
     final doneToday = ref.watch(reviewedTodayCountProvider);
+    final today = ref.watch(currentDayProvider);
 
     final pending = overdue.length + due.length;
     final isDark = theme.brightness == Brightness.dark;
@@ -36,7 +43,7 @@ class TodayPage extends ConsumerWidget {
       slivers: [
             TabAppBar(
               title: _greeting(),
-              subtitle: DateLabels.fullDate(DateTime.now()),
+              subtitle: DateLabels.fullDate(today),
               actions: [
                 IconButton(
                   tooltip: isDark ? 'Light theme' : 'Dark theme',
@@ -85,7 +92,7 @@ class TodayPage extends ConsumerWidget {
                   accent: cs.error,
                 ),
               ),
-              _TopicSliver(topics: overdue, completable: true),
+              _SubtopicSliver(subtopics: overdue, completable: true),
             ],
 
             if (due.isNotEmpty) ...[
@@ -96,7 +103,7 @@ class TodayPage extends ConsumerWidget {
                   accent: cs.primary,
                 ),
               ),
-              _TopicSliver(topics: due, completable: true),
+              _SubtopicSliver(subtopics: due, completable: true),
             ],
 
             if (overdue.isEmpty && due.isEmpty)
@@ -106,12 +113,12 @@ class TodayPage extends ConsumerWidget {
                   icon: Icons.auto_awesome_rounded,
                   title: 'Nothing to revise yet',
                   subtitle:
-                      'Add your first topic and RecallDay will remind you to '
-                      'review it at the right moments.',
+                      'Add your first subtopic and RecallDay will remind you '
+                      'to review it at the right moments.',
                   action: FilledButton.icon(
-                    onPressed: () => context.push('/create/topic'),
+                    onPressed: () => context.push('/create/subtopic'),
                     icon: const Icon(Icons.add_rounded, size: 20),
-                    label: const Text('Add a topic'),
+                    label: const Text('Add a subtopic'),
                   ),
                 ),
               ),
@@ -227,46 +234,50 @@ class _DayProgressCard extends StatelessWidget {
   }
 }
 
-class _TopicSliver extends ConsumerWidget {
-  final List<Topic> topics;
+class _SubtopicSliver extends ConsumerWidget {
+  final List<Subtopic> subtopics;
 
-  /// Rows in this list are due, so they carry a Revise button.
+  /// Rows in this list are due, so they carry the two revision buttons.
   final bool completable;
 
-  const _TopicSliver({required this.topics, this.completable = false});
+  const _SubtopicSliver({required this.subtopics, this.completable = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
+    final subjects = ref.watch(subjectsByIdProvider);
+    final topics = ref.watch(topicsByIdProvider);
     final cs = Theme.of(context).colorScheme;
 
     return SliverList.separated(
-      itemCount: topics.length,
+      itemCount: subtopics.length,
       separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
       itemBuilder: (_, i) {
-        final t = topics[i];
-        final s = subjects.where((s) => s.id == t.subjectId).firstOrNull;
+        final s = subtopics[i];
+        final subject = subjects[s.subjectId];
+        final topic = topics[s.topicId];
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.gutter),
           child: FadeSlideIn(
             index: i,
             child: SwipeToDelete(
-              itemKey: ValueKey('topic-${t.id}'),
-              title: 'Delete topic?',
-              message:
-                  'This permanently removes “${t.title}” and its review history.',
-              onDelete: () => ref.read(topicCommandsProvider).deleteTopic(t.id),
-              child: TopicCard(
-                topic: t,
-                subjectName: s?.name ?? 'No subject',
-                accent: s?.color ?? cs.primary,
-                relativeLabel: DateLabels.relative(t.nextDueAt),
-                onTap: () => context.push('/topic/${t.id}'),
+              itemKey: ValueKey('subtopic-${s.id}'),
+              title: 'Delete subtopic?',
+              message: 'This permanently removes “${s.title}” and its '
+                  'review history.',
+              onDelete: () =>
+                  ref.read(topicCommandsProvider).deleteSubtopic(s.id),
+              child: SubtopicCard(
+                subtopic: s,
+                topicName: topic?.title,
+                subjectName: subject?.name ?? 'No subject',
+                accent: subject?.color ?? cs.primary,
+                relativeLabel: DateLabels.relative(s.nextDueAt),
+                onTap: () => context.push('/subtopic/${s.id}'),
                 onDone: completable
-                    ? () => reviseTopic(context, ref, t.id, t.title)
+                    ? () => reviseSubtopic(context, ref, s.id, s.title)
                     : null,
                 onMissed: completable
-                    ? () => markMissed(context, ref, t.id, t.title)
+                    ? () => markMissed(context, ref, s.id, s.title)
                     : null,
               ),
             ),

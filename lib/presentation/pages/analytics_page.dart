@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
-import '../../domain/entities/topic.dart';
+import '../../domain/entities/subtopic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/empty_state.dart';
@@ -25,8 +25,8 @@ import '../widgets/tab_app_bar.dart';
 ///     user nothing they could act on.
 ///
 /// What replaces them is drawn only from things the user actually did: days
-/// they revised, revisions completed, topics they chose to master, and what is
-/// due next.
+/// they revised, revisions completed, subtopics they chose to master, and
+/// what is due next.
 class AnalyticsPage extends ConsumerWidget {
   const AnalyticsPage({super.key});
 
@@ -36,9 +36,10 @@ class AnalyticsPage extends ConsumerWidget {
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
 
-    final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
+    final subtopics =
+        ref.watch(subtopicsStreamProvider).valueOrNull ?? const <Subtopic>[];
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
-    final reviews = ref.watch(topicRepositoryProvider).allReviews();
+    final reviews = ref.watch(subtopicRepositoryProvider).allReviews();
     final streak = ref.watch(streakDaysProvider);
     final best = ref.watch(bestStreakProvider);
     final activity = ref.watch(recentActivityProvider);
@@ -46,7 +47,7 @@ class AnalyticsPage extends ConsumerWidget {
     final success = StatusColors.success(context);
     final warning = StatusColors.warning(context);
 
-    if (topics.isEmpty && reviews.isEmpty) {
+    if (subtopics.isEmpty && reviews.isEmpty) {
       return const CustomScrollView(
         slivers: [
           TabAppBar(title: 'Progress'),
@@ -68,8 +69,9 @@ class AnalyticsPage extends ConsumerWidget {
     final weekAgo = now.subtract(const Duration(days: 7));
     final thisWeek = reviews.where((r) => r.reviewedAt.isAfter(weekAgo)).length;
 
-    final mastered =
-        topics.where((t) => t.status == TopicStatus.completed).length;
+    final mastered = subtopics
+        .where((s) => s.status == SubtopicStatus.completed)
+        .length;
     final dueToday = ref.watch(dueTodayProvider).length +
         ref.watch(overdueProvider).length;
 
@@ -139,7 +141,8 @@ class AnalyticsPage extends ConsumerWidget {
                 Text('By subject', style: tt.titleMedium),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  'How far through each subject you are.',
+                  'How far through each subject you are, counted in '
+                  'subtopics — the level that carries a schedule.',
                   style: tt.labelSmall,
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -147,8 +150,9 @@ class AnalyticsPage extends ConsumerWidget {
                   Builder(
                     builder: (_) {
                       final s = subjects[i];
-                      final mine =
-                          topics.where((t) => t.subjectId == s.id).toList();
+                      final mine = subtopics
+                          .where((x) => x.subjectId == s.id)
+                          .toList();
                       return FadeSlideIn(
                         index: i,
                         child: Padding(
@@ -162,10 +166,10 @@ class AnalyticsPage extends ConsumerWidget {
                             ),
                             total: mine.length,
                             mastered: mine
-                                .where((t) =>
-                                    t.status == TopicStatus.completed)
+                                .where((x) =>
+                                    x.status == SubtopicStatus.completed)
                                 .length,
-                            due: mine.where((t) => t.isDue).length,
+                            due: mine.where((x) => x.isDue).length,
                             onTap: () => context.push('/subject/${s.id}'),
                           ),
                         ),
@@ -408,7 +412,7 @@ class _SubjectProgress extends StatelessWidget {
           const SizedBox(height: AppSpacing.sm),
           Text(
             total == 0
-                ? 'No topics yet'
+                ? 'No subtopics yet'
                 : '$mastered of $total mastered',
             style: tt.labelSmall,
           ),

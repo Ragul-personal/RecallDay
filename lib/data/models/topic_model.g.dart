@@ -5,7 +5,7 @@ part of 'topic_model.dart';
 
 class TopicModelAdapter extends TypeAdapter<TopicModel> {
   @override
-  final int typeId = 2;
+  final int typeId = 4;
 
   @override
   TopicModel read(BinaryReader reader) {
@@ -17,52 +17,18 @@ class TopicModelAdapter extends TypeAdapter<TopicModel> {
       id: fields[0] as String,
       subjectId: fields[1] as String,
       title: fields[2] as String,
-      notes: fields[3] as String?,
-      tags: (fields[4] as List?)?.cast<String>() ?? const [],
-      priorityIndex: (fields[5] as int?) ?? 1,
-      difficultyIndex: (fields[6] as int?) ?? 1,
-      estimatedMinutes: (fields[7] as int?) ?? 15,
-      createdAt: fields[8] as DateTime,
-      repetitions: (fields[9] as int?) ?? 0,
-      ease: (fields[10] as num?)?.toDouble() ?? 2.5,
-      currentIntervalDays: (fields[11] as int?) ?? 0,
-      ladderIndex: (fields[12] as int?) ?? 0,
-      nextDueAt: fields[13] as DateTime,
-      lastReviewedAt: fields[14] as DateTime?,
-      statusIndex: (fields[15] as int?) ?? 0,
-      reminderHour: (fields[16] as int?) ?? 19,
-      reminderMinute: (fields[17] as int?) ?? 0,
-      persistentReminders: (fields[18] as bool?) ?? true,
-      // Field 19 is absent in boxes written by earlier builds, so a null
-      // here is the normal case for existing topics, not an error.
-      attachments: (fields[19] as List?)?.cast<String>() ?? const [],
+      createdAt: fields[3] as DateTime,
     );
   }
 
   @override
   void write(BinaryWriter writer, TopicModel obj) {
     writer
-      ..writeByte(20)
+      ..writeByte(4)
       ..writeByte(0)..write(obj.id)
       ..writeByte(1)..write(obj.subjectId)
       ..writeByte(2)..write(obj.title)
-      ..writeByte(3)..write(obj.notes)
-      ..writeByte(4)..write(obj.tags)
-      ..writeByte(5)..write(obj.priorityIndex)
-      ..writeByte(6)..write(obj.difficultyIndex)
-      ..writeByte(7)..write(obj.estimatedMinutes)
-      ..writeByte(8)..write(obj.createdAt)
-      ..writeByte(9)..write(obj.repetitions)
-      ..writeByte(10)..write(obj.ease)
-      ..writeByte(11)..write(obj.currentIntervalDays)
-      ..writeByte(12)..write(obj.ladderIndex)
-      ..writeByte(13)..write(obj.nextDueAt)
-      ..writeByte(14)..write(obj.lastReviewedAt)
-      ..writeByte(15)..write(obj.statusIndex)
-      ..writeByte(16)..write(obj.reminderHour)
-      ..writeByte(17)..write(obj.reminderMinute)
-      ..writeByte(18)..write(obj.persistentReminders)
-      ..writeByte(19)..write(obj.attachments);
+      ..writeByte(3)..write(obj.createdAt);
   }
 
   @override

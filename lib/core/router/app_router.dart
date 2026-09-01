@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../presentation/pages/analytics_page.dart';
 import '../../presentation/pages/calendar_page.dart';
 import '../../presentation/pages/create_subject_page.dart';
+import '../../presentation/pages/create_subtopic_page.dart';
 import '../../presentation/pages/create_topic_page.dart';
 import '../../presentation/pages/home_shell.dart';
 import '../../presentation/pages/onboarding_page.dart';
@@ -12,6 +13,7 @@ import '../../presentation/pages/settings_page.dart';
 import '../../presentation/pages/splash_page.dart';
 import '../../presentation/pages/subject_detail_page.dart';
 import '../../presentation/pages/subjects_page.dart';
+import '../../presentation/pages/subtopic_detail_page.dart';
 import '../../presentation/pages/today_page.dart';
 import '../../presentation/pages/topic_detail_page.dart';
 
@@ -82,21 +84,25 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootKey,
         builder: (_, __) => const SettingsPage(),
       ),
-      GoRoute(
-        path: '/topic/:id',
-        parentNavigatorKey: _rootKey,
-        builder: (_, s) => TopicDetailPage(topicId: s.pathParameters['id']!),
-      ),
+      // Subject → Topic → Subtopic, one route per level. The two detail pages
+      // are separate screens rather than one parameterised page because they
+      // list different things and offer different actions: a topic page is a
+      // table of contents, a subtopic page is where a revision is recorded.
       GoRoute(
         path: '/subject/:id',
         parentNavigatorKey: _rootKey,
         builder: (_, s) => SubjectDetailPage(subjectId: s.pathParameters['id']!),
       ),
       GoRoute(
-        path: '/create/topic',
+        path: '/topic/:id',
         parentNavigatorKey: _rootKey,
-        builder: (_, s) => CreateTopicPage(
-          initialSubjectId: s.uri.queryParameters['subjectId'],
+        builder: (_, s) => TopicDetailPage(topicId: s.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/subtopic/:id',
+        parentNavigatorKey: _rootKey,
+        builder: (_, s) => SubtopicDetailPage(
+          subtopicId: s.pathParameters['id']!,
         ),
       ),
       GoRoute(
@@ -110,9 +116,29 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, s) => CreateSubjectPage(editId: s.pathParameters['id']),
       ),
       GoRoute(
+        path: '/create/topic',
+        parentNavigatorKey: _rootKey,
+        builder: (_, s) => CreateTopicPage(
+          initialSubjectId: s.uri.queryParameters['subjectId'],
+        ),
+      ),
+      GoRoute(
         path: '/edit/topic/:id',
         parentNavigatorKey: _rootKey,
         builder: (_, s) => CreateTopicPage(editId: s.pathParameters['id']),
+      ),
+      GoRoute(
+        path: '/create/subtopic',
+        parentNavigatorKey: _rootKey,
+        builder: (_, s) => CreateSubtopicPage(
+          initialSubjectId: s.uri.queryParameters['subjectId'],
+          initialTopicId: s.uri.queryParameters['topicId'],
+        ),
+      ),
+      GoRoute(
+        path: '/edit/subtopic/:id',
+        parentNavigatorKey: _rootKey,
+        builder: (_, s) => CreateSubtopicPage(editId: s.pathParameters['id']),
       ),
     ],
     errorBuilder: (_, s) => Scaffold(

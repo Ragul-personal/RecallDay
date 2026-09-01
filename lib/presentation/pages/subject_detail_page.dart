@@ -5,8 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
-import '../../core/utils/date_utils.dart';
-import '../../domain/entities/topic.dart';
+import '../../domain/entities/subtopic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/delete_confirm.dart';
@@ -14,6 +13,11 @@ import '../widgets/empty_state.dart';
 import '../widgets/motion.dart';
 import '../widgets/topic_card.dart';
 
+/// A subject, as a list of its topics.
+///
+/// Level two of Subject → Topic → Subtopic. Nothing here is schedulable, so
+/// there are no revision buttons: the row counts tell you where the work is
+/// and you drill into a topic to do it.
 class SubjectDetailPage extends ConsumerWidget {
   final String subjectId;
   const SubjectDetailPage({super.key, required this.subjectId});
@@ -24,11 +28,9 @@ class SubjectDetailPage extends ConsumerWidget {
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
 
-    final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
-    final subject = subjects.where((s) => s.id == subjectId).firstOrNull;
-    final all = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
-    final topics = all.where((t) => t.subjectId == subjectId).toList()
-      ..sort((a, b) => a.nextDueAt.compareTo(b.nextDueAt));
+    final subject = ref.watch(subjectsByIdProvider)[subjectId];
+    final topics = ref.watch(topicsForSubjectProvider(subjectId));
+    final subtopics = ref.watch(subtopicsForSubjectProvider(subjectId));
 
     if (subject == null) {
       return Scaffold(
@@ -38,10 +40,18 @@ class SubjectDetailPage extends ConsumerWidget {
     }
 
     final accent = SubjectPalette.readable(subject.color, theme.brightness);
-    final due = topics.where((t) => t.isDue).length;
-    final done =
-        topics.where((t) => t.status == TopicStatus.completed).length;
+    final due = subtopics.where((s) => s.isDue).length;
+    final done = subtopics
+        .where((s) => s.status == SubtopicStatus.completed)
+        .length;
     final success = StatusColors.success(context);
+
+    // Grouped once rather than filtered per row: a subject with a lot of
+    // topics would otherwise walk the whole subtopic list for every card.
+    final byTopic = <String, List<Subtopic>>{};
+    for (final s in subtopics) {
+      byTopic.putIfAbsent(s.topicId, () => <Subtopic>[]).add(s);
+    }
 
     Future<void> confirmAndDelete() async {
       final ok = await confirmDelete(
@@ -49,9 +59,11 @@ class SubjectDetailPage extends ConsumerWidget {
         title: 'Delete subject?',
         message: topics.isEmpty
             ? 'This permanently removes “${subject.name}”.'
-            : 'This permanently removes “${subject.name}” and its '
-                '${topics.length} topic${topics.length == 1 ? '' : 's'}, '
-                'including all review history.',
+            : 'This permanently removes “${subject.name}”, its '
+                '${topics.length} topic${topics.length == 1 ? '' : 's'} and '
+                'the ${subtopics.length} subtopic'
+                '${subtopics.length == 1 ? '' : 's'} inside them, including '
+                'all review history.',
       );
       if (!ok || !context.mounted) return;
       await ref.read(topicCommandsProvider).deleteSubjectCascading(subjectId);
@@ -147,7 +159,9 @@ class SubjectDetailPage extends ConsumerWidget {
                             children: [
                               Text(
                                 '${topics.length} topic'
-                                '${topics.length == 1 ? '' : 's'}',
+                                '${topics.length == 1 ? '' : 's'} · '
+                                '${subtopics.length} subtopic'
+                                '${subtopics.length == 1 ? '' : 's'}',
                                 style: tt.titleMedium,
                               ),
                               const SizedBox(height: AppSpacing.sm),
@@ -185,11 +199,11 @@ class SubjectDetailPage extends ConsumerWidget {
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: EmptyState(
-                  icon: Icons.note_add_outlined,
+                  icon: Icons.topic_outlined,
                   title: 'No topics here yet',
                   subtitle:
-                      'Add a topic to “${subject.name}” and RecallDay will '
-                      'schedule the revisions for you.',
+                      'Topics divide “${subject.name}” into chapters. Add one, '
+                      'then put the subtopics you actually revise inside it.',
                   action: FilledButton.icon(
                     onPressed: () =>
                         context.push('/create/topic?subjectId=$subjectId'),
@@ -216,20 +230,30 @@ class SubjectDetailPage extends ConsumerWidget {
                       const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (_, i) {
                     final t = topics[i];
+                    final mine = byTopic[t.id] ?? const <Subtopic>[];
                     return FadeSlideIn(
                       index: i,
                       child: SwipeToDelete(
                         itemKey: ValueKey('topic-${t.id}'),
                         title: 'Delete topic?',
-                        message: 'This permanently removes “${t.title}” '
-                            'and its review history.',
-                        onDelete: () =>
-                            ref.read(topicCommandsProvider).deleteTopic(t.id),
+                        message: mine.isEmpty
+                            ? 'This permanently removes “${t.title}”.'
+                            : 'This permanently removes “${t.title}” and the '
+                                '${mine.length} subtopic'
+                                '${mine.length == 1 ? '' : 's'} inside it, '
+                                'including all review history.',
+                        onDelete: () => ref
+                            .read(topicCommandsProvider)
+                            .deleteTopicCascading(t.id),
                         child: TopicCard(
-                          topic: t,
-                          subjectName: subject.name,
+                          title: t.title,
                           accent: subject.color,
-                          relativeLabel: DateLabels.relative(t.nextDueAt),
+                          subtopicCount: mine.length,
+                          dueCount: mine.where((s) => s.isDue).length,
+                          masteredCount: mine
+                              .where((s) =>
+                                  s.status == SubtopicStatus.completed)
+                              .length,
                           onTap: () => context.push('/topic/${t.id}'),
                         ),
                       ),

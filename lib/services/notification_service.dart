@@ -10,7 +10,7 @@ import '../core/theme/app_theme.dart' show BrandColors;
 
 // Hide our domain `Priority` enum — `flutter_local_notifications` exports a
 // type with the same name and we use the latter here.
-import '../domain/entities/topic.dart' hide Priority;
+import '../domain/entities/subtopic.dart' hide Priority;
 
 /// Reliability strategy
 /// --------------------
@@ -31,7 +31,7 @@ import '../domain/entities/topic.dart' hide Priority;
 ///   2. Also schedule daily "safety re-fire" alarms after the due date; if the
 ///      user misses today, they're re-prompted tomorrow at the same hour. This
 ///      is the "persistent reminders" guarantee.
-///   3. Re-arm every active topic on app start ([scheduleAllFrom]) and from a
+///   3. Re-arm every active subtopic on app start ([scheduleAllFrom]) and a
 ///      periodic WorkManager sweep, so alarms dropped by OEM cleanup come back.
 ///   4. A boot receiver (registered in AndroidManifest) re-arms alarms after
 ///      device restart; flutter_local_notifications already ships this.
@@ -57,14 +57,14 @@ class NotificationService {
   static const String _channelDesc =
       'Reminders to revise topics on your spaced-repetition schedule.';
 
-  /// Fixed ids for the two daily digests. Well clear of the per-topic id
+  /// Fixed ids for the two daily digests. Well clear of the per-subtopic id
   /// blocks below (max 99999 * 16 ≈ 1.6M).
   static const int _morningDigestId = 1900000001;
   static const int _eveningDigestId = 1900000002;
 
-  /// Slots reserved per topic: 1 primary + [_followUpDays] daily re-fires.
+  /// Slots reserved per subtopic: 1 primary + [_followUpDays] daily re-fires.
   static const int _followUpDays = 14;
-  static const int _idsPerTopic = 16; // next power of two ≥ 1 + _followUpDays
+  static const int _idsPerSubtopic = 16; // power of two ≥ 1 + _followUpDays
 
   static const String _actionDone = 'mark_done';
   static const String _actionSnooze = 'snooze';
@@ -75,7 +75,7 @@ class NotificationService {
   bool _initialized = false;
 
   /// Static pointer set during init — taps invoke this to navigate.
-  static void Function(String topicId, String? action)? onAction;
+  static void Function(String subtopicId, String? action)? onAction;
 
   Future<void> init() async {
     if (_initialized) return;
@@ -205,45 +205,48 @@ class NotificationService {
     }
   }
 
-  /// Schedule the next-due reminder for a single topic, plus daily re-fires.
+  /// Schedule the next-due reminder for one subtopic, plus daily re-fires.
   ///
-  /// Idempotent: cancels this topic's existing notifications first. Never
+  /// Idempotent: cancels this subtopic's existing notifications first. Never
   /// throws — failures are logged and swallowed so callers can treat scheduling
   /// as best-effort side work.
   ///
-  /// [subjectName] is shown in the notification body so the reminder reads
-  /// "Operating Systems · Deadlocks" rather than just the bare topic title.
-  /// [showOverdueImmediately] posts an already-due topic's reminder right away.
+  /// [subjectName] and [topicName] are shown in the notification body so the
+  /// reminder reads "Operating Systems · Deadlocks · Coffman conditions"
+  /// rather than just the bare leaf title.
+  /// [showOverdueImmediately] posts an already-due reminder right away.
   /// Callers re-arming while the user is actively in the app pass false — the
   /// Today screen is already showing them the same list, and firing a burst of
   /// notifications behind it is just noise.
-  Future<void> scheduleForTopic(
-    Topic topic, {
+  Future<void> scheduleForSubtopic(
+    Subtopic subtopic, {
     String? subjectName,
+    String? topicName,
     bool showOverdueImmediately = true,
   }) async {
     try {
       await init();
-      await cancelForTopic(topic.id);
+      await cancelForSubtopic(subtopic.id);
 
-      if (topic.status != TopicStatus.active) return;
+      if (subtopic.status != SubtopicStatus.active) return;
 
+      final where = _whereLabel(subjectName, topicName);
       final now = tz.TZDateTime.now(tz.local);
-      final due = tz.TZDateTime.from(topic.nextDueAt, tz.local);
-      final base = _idForTopic(topic.id);
+      final due = tz.TZDateTime.from(subtopic.nextDueAt, tz.local);
+      final base = _idForSubtopic(subtopic.id);
 
       if (due.isAfter(now)) {
-        await _scheduleAt(topic, due, base, subjectName);
+        await _scheduleAt(subtopic, due, base, where);
       } else if (showOverdueImmediately) {
         // Already due/overdue — surface it immediately.
-        await _showNow(topic, subjectName);
+        await _showNow(subtopic, where);
       }
 
-      if (!topic.persistentReminders) return;
+      if (!subtopic.persistentReminders) return;
 
       // Daily re-fire safety net, anchored to the user's reminder time so the
       // follow-ups land at the hour they chose rather than at whatever moment
-      // the topic happened to fall due.
+      // the subtopic happened to fall due.
       final anchor = due.isAfter(now) ? due : now;
       for (var i = 1; i <= _followUpDays; i++) {
         final day = anchor.add(Duration(days: i));
@@ -252,32 +255,36 @@ class NotificationService {
           day.year,
           day.month,
           day.day,
-          topic.reminderHour,
-          topic.reminderMinute,
+          subtopic.reminderHour,
+          subtopic.reminderMinute,
         );
         if (!reFire.isAfter(now)) continue;
-        await _scheduleAt(topic, reFire, base + i, subjectName);
+        await _scheduleAt(subtopic, reFire, base + i, where);
       }
     } catch (e, st) {
-      debugPrint('[notifications] scheduleForTopic(${topic.id}) failed: $e\n$st');
+      debugPrint(
+        '[notifications] scheduleForSubtopic(${subtopic.id}) failed: $e\n$st',
+      );
     }
   }
 
-  /// Re-arm every active topic. Called on app start and from the WorkManager
-  /// sweep — alarms are the first thing OEM battery savers drop.
+  /// Re-arm every active subtopic. Called on app start and from the
+  /// WorkManager sweep — alarms are the first thing OEM battery savers drop.
   ///
-  /// [subjectNames] maps subjectId → display name; missing entries just omit
-  /// the subject prefix.
+  /// [subjectNames] and [topicNames] map id → display name; a missing entry
+  /// just omits that part of the prefix.
   Future<void> scheduleAllFrom(
-    List<Topic> topics, {
+    List<Subtopic> subtopics, {
     Map<String, String> subjectNames = const {},
+    Map<String, String> topicNames = const {},
     bool showOverdueImmediately = true,
   }) async {
-    for (final t in topics) {
-      if (t.status != TopicStatus.active) continue;
-      await scheduleForTopic(
-        t,
-        subjectName: subjectNames[t.subjectId],
+    for (final s in subtopics) {
+      if (s.status != SubtopicStatus.active) continue;
+      await scheduleForSubtopic(
+        s,
+        subjectName: subjectNames[s.subjectId],
+        topicName: topicNames[s.topicId],
         showOverdueImmediately: showOverdueImmediately,
       );
     }
@@ -285,11 +292,11 @@ class NotificationService {
 
   /// The two daily summaries: a morning nudge and an evening catch-up.
   ///
-  /// These aren't per-topic alarms, so they can't be scheduled once and left —
+  /// These aren't per-subtopic alarms, so they can't be scheduled once and left
   /// whether they should fire at all depends on the data at the time. Instead
   /// the next occurrence is (re)scheduled whenever anything changes and on
   /// every app start, and cancelled outright when [count] is zero. That way
-  /// the user is never greeted with "you have 0 topics to revise".
+  /// the user is never greeted with "you have 0 subtopics to revise".
   Future<void> scheduleDigest({
     required DigestSlot slot,
     required DateTime when,
@@ -306,7 +313,7 @@ class NotificationService {
           ? 'Good morning'
           : 'Good evening';
       final body = slot == DigestSlot.morning
-          ? 'You have $count topic$plural to revise today. A good time to '
+          ? 'You have $count subtopic$plural to revise today. A good time to '
               'start while it is fresh.'
           : '$count revision$plural still waiting today. A few minutes now and '
               'you are done.';
@@ -342,15 +349,15 @@ class NotificationService {
     }
   }
 
-  Future<void> cancelForTopic(String topicId) async {
+  Future<void> cancelForSubtopic(String subtopicId) async {
     try {
       await init();
-      final base = _idForTopic(topicId);
+      final base = _idForSubtopic(subtopicId);
       for (var i = 0; i <= _followUpDays; i++) {
         await _fln.cancel(base + i);
       }
     } catch (e) {
-      debugPrint('[notifications] cancelForTopic($topicId) failed: $e');
+      debugPrint('[notifications] cancelForSubtopic($subtopicId) failed: $e');
     }
   }
 
@@ -372,17 +379,17 @@ class NotificationService {
   /// always passed `exactAllowWhileIdle`, and Android 13+/14 throws
   /// `PlatformException(exact_alarms_not_permitted)` for apps without that
   /// (user-granted, off-by-default) permission. The throw escaped into
-  /// `createTopic`, so the alarm was never registered *and* the create screen
+  /// `createSubtopic`, so the alarm was never registered *and* the create screen
   /// hung. We now check first and, belt-and-braces, retry inexact on throw.
   Future<void> _scheduleAt(
-    Topic topic,
+    Subtopic subtopic,
     tz.TZDateTime when,
     int id,
-    String? subjectName,
+    String? where,
   ) async {
     final mode = await _preferredScheduleMode();
     try {
-      await _zonedSchedule(topic, when, id, subjectName, mode);
+      await _zonedSchedule(subtopic, when, id, where, mode);
     } catch (e) {
       // Deliberately catching everything, not just Exception: the platform
       // channel can surface errors as well as exceptions, and a reminder that
@@ -390,7 +397,7 @@ class NotificationService {
       if (mode == AndroidScheduleMode.exactAllowWhileIdle) {
         debugPrint('[notifications] exact alarm rejected ($e) — retrying inexact');
         _exactAlarmsAllowed = false;
-        await _zonedSchedule(topic, when, id, subjectName,
+        await _zonedSchedule(subtopic, when, id, where,
             AndroidScheduleMode.inexactAllowWhileIdle);
       } else {
         rethrow;
@@ -399,37 +406,56 @@ class NotificationService {
   }
 
   Future<void> _zonedSchedule(
-    Topic topic,
+    Subtopic subtopic,
     tz.TZDateTime when,
     int id,
-    String? subjectName,
+    String? where,
     AndroidScheduleMode mode,
   ) {
+    final title = _titleFor(subtopic);
+    final body = _bodyFor(subtopic, where);
     return _fln.zonedSchedule(
       id,
-      _titleFor(topic),
-      _bodyFor(topic, subjectName),
+      title,
+      body,
       when,
-      _details(title: _titleFor(topic), body: _bodyFor(topic, subjectName)),
-      payload: jsonEncode({'topicId': topic.id}),
+      _details(title: title, body: body),
+      payload: _payloadFor(subtopic.id),
       androidScheduleMode: mode,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
-  Future<void> _showNow(Topic topic, String? subjectName) async {
+  Future<void> _showNow(Subtopic subtopic, String? where) async {
+    final title = _titleFor(subtopic);
+    final body = _bodyFor(subtopic, where);
     await _fln.show(
-      _idForTopic(topic.id),
-      _titleFor(topic),
-      _bodyFor(topic, subjectName),
-      _details(title: _titleFor(topic), body: _bodyFor(topic, subjectName)),
-      payload: jsonEncode({'topicId': topic.id}),
+      _idForSubtopic(subtopic.id),
+      title,
+      body,
+      _details(title: title, body: body),
+      payload: _payloadFor(subtopic.id),
     );
   }
 
+  /// Where the subtopic sits, as one "Subject · Topic" string. Either half can
+  /// be missing — a subject deleted mid-flight, say — so the parts are
+  /// filtered rather than assumed.
+  String? _whereLabel(String? subjectName, String? topicName) {
+    final parts = [subjectName, topicName]
+        .whereType<String>()
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
+  static String _payloadFor(String subtopicId) =>
+      jsonEncode({'subtopicId': subtopicId});
+
   /// Cached so we don't hit the permission channel once per scheduled alarm
-  /// (a topic with follow-ups schedules 15 of them in a row).
+  /// (a subtopic with follow-ups schedules 15 of them in a row).
   bool? _exactAlarmsAllowed;
 
   Future<AndroidScheduleMode> _preferredScheduleMode() async {
@@ -473,20 +499,20 @@ class NotificationService {
     }
   }
 
-  String _titleFor(Topic t) => 'Revise: ${t.title}';
+  String _titleFor(Subtopic s) => 'Revise: ${s.title}';
 
-  /// Body leads with the subject so the notification says *what to study and
-  /// where it belongs* at a glance, then appends the note excerpt if present.
-  String _bodyFor(Topic t, String? subjectName) {
+  /// Body leads with subject and topic so the notification says *what to
+  /// study and where it belongs* at a glance, then appends the note excerpt.
+  String _bodyFor(Subtopic s, String? where) {
     final parts = <String>[];
-    if (subjectName != null && subjectName.trim().isNotEmpty) {
-      parts.add(subjectName.trim());
-    }
-    final notes = t.notes?.trim();
+    if (where != null && where.isNotEmpty) parts.add(where);
+    final notes = s.notes?.trim();
     if (notes != null && notes.isNotEmpty) {
       parts.add(notes.length > 120 ? '${notes.substring(0, 120)}…' : notes);
     } else {
-      parts.add(t.isOverdue ? 'Overdue — let’s knock it out' : 'Time to revise');
+      parts.add(
+        s.isOverdue ? 'Overdue — let’s knock it out' : 'Time to revise',
+      );
     }
     return parts.join(' · ');
   }
@@ -521,7 +547,7 @@ class NotificationService {
           setAsGroupSummary: false,
           // showsUserInterface=true is intentional. Background-isolate actions
           // can't reliably mutate Hive without re-initializing it; opening the
-          // app to TopicDetailPage and replaying the action from query params
+          // app to SubtopicDetailPage and replaying the action from params
           // is simpler, more reliable, and matches user expectations
           // ("tapping Done should open the app and confirm the review").
           actions: const <AndroidNotificationAction>[
@@ -535,42 +561,49 @@ class NotificationService {
         ),
       );
 
-  // Well clear of the topic id blocks below (max 99999 * 16 ≈ 1.6M).
+  // Well clear of the subtopic id blocks below (max 99999 * 16 ≈ 1.6M).
   static const int _testId = 2000000000;
 
-  // Stable, collision-free integer id derived from the topic uuid.
+  // Stable, collision-free integer id derived from the subtopic uuid.
   //
-  // Each topic owns a block of [_idsPerTopic] consecutive ids (primary +
+  // Each subtopic owns a block of [_idsPerSubtopic] consecutive ids (primary +
   // follow-ups). The old scheme used the raw hash and then added 0..7, so two
-  // topics whose hashes landed within 7 of each other silently cancelled one
+  // records whose hashes landed within 7 of each other silently cancelled one
   // another's re-fires.
-  int _idForTopic(String topicId) {
-    final block = topicId.hashCode.abs() % 100000;
-    return block * _idsPerTopic;
+  //
+  // Leaf ids did not change when the subtopic layer landed, so alarms already
+  // sitting on a phone still map to the right block after the upgrade.
+  int _idForSubtopic(String subtopicId) {
+    final block = subtopicId.hashCode.abs() % 100000;
+    return block * _idsPerSubtopic;
   }
 
   // ---------- response routing ----------
 
   static void _handleResponse(NotificationResponse r) {
-    final topicId = _topicIdFromPayload(r.payload);
-    if (topicId == null) return;
-    onAction?.call(topicId, r.actionId);
+    final subtopicId = _subtopicIdFromPayload(r.payload);
+    if (subtopicId == null) return;
+    onAction?.call(subtopicId, r.actionId);
   }
 
   @pragma('vm:entry-point')
   static void _handleResponseBackground(NotificationResponse r) {
     // Background isolate has no Riverpod context. Tapping the notification
     // brings the app up and [_handleResponse] replays the action there.
-    final topicId = _topicIdFromPayload(r.payload);
-    if (topicId == null) return;
-    debugPrint('background action: ${r.actionId} on $topicId');
+    final subtopicId = _subtopicIdFromPayload(r.payload);
+    if (subtopicId == null) return;
+    debugPrint('background action: ${r.actionId} on $subtopicId');
   }
 
-  static String? _topicIdFromPayload(String? p) {
+  /// `topicId` was this payload's key before the subtopic layer, and an alarm
+  /// scheduled by an older build can still be sitting on the phone when the new
+  /// one reads it. The id inside is the leaf's, which did not change, so the
+  /// fallback routes an old notification to exactly the right place.
+  static String? _subtopicIdFromPayload(String? p) {
     if (p == null || p.isEmpty) return null;
     try {
       final m = jsonDecode(p) as Map<String, dynamic>;
-      return m['topicId'] as String?;
+      return (m['subtopicId'] as String?) ?? (m['topicId'] as String?);
     } catch (_) {
       return null;
     }

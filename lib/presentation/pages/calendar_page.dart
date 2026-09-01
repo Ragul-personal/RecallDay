@@ -7,7 +7,7 @@ import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
 import '../../core/utils/date_utils.dart';
-import '../../domain/entities/topic.dart';
+import '../../domain/entities/subtopic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/motion.dart';
@@ -16,7 +16,7 @@ import '../widgets/tab_app_bar.dart';
 
 /// What a calendar row represents.
 enum _Kind {
-  /// The topic's real `nextDueAt` — a commitment.
+  /// The subtopic's real `nextDueAt` — a commitment.
   scheduled,
 
   /// A later rung on the SR ladder. Recomputed after every review, so it's
@@ -30,10 +30,10 @@ enum _Kind {
 }
 
 class _CalEntry {
-  final Topic topic;
+  final Subtopic subtopic;
   final DateTime when;
   final _Kind kind;
-  const _CalEntry(this.topic, this.when, this.kind);
+  const _CalEntry(this.subtopic, this.when, this.kind);
 }
 
 class CalendarPage extends ConsumerStatefulWidget {
@@ -58,34 +58,37 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     final tt = theme.textTheme;
     final success = StatusColors.success(context);
 
-    final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
-    final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
+    final subtopics =
+        ref.watch(subtopicsStreamProvider).valueOrNull ?? const <Subtopic>[];
+    final subjects = ref.watch(subjectsByIdProvider);
+    final topics = ref.watch(topicsByIdProvider);
     final engine = ref.watch(engineProvider);
-    final reviews = ref.watch(topicRepositoryProvider).allReviews();
+    final reviews = ref.watch(subtopicRepositoryProvider).allReviews();
 
     final byDay = <DateTime, List<_CalEntry>>{};
     void add(_CalEntry e) =>
         byDay.putIfAbsent(_key(e.when), () => <_CalEntry>[]).add(e);
 
     // Forward: what's coming.
-    for (final t in topics) {
-      if (t.status != TopicStatus.active) continue;
-      final projected = engine.projectFutureDueDates(t);
+    for (final s in subtopics) {
+      if (s.status != SubtopicStatus.active) continue;
+      final projected = engine.projectFutureDueDates(s);
       for (var i = 0; i < projected.length; i++) {
         add(_CalEntry(
-          t,
+          s,
           projected[i],
           i == 0 ? _Kind.scheduled : _Kind.projected,
         ));
       }
     }
 
-    // Backward: what actually happened. Reviews of deleted topics are skipped.
-    final byId = {for (final t in topics) t.id: t};
+    // Backward: what actually happened. Reviews of deleted records are
+    // skipped.
+    final byId = {for (final s in subtopics) s.id: s};
     for (final r in reviews) {
-      final t = byId[r.topicId];
-      if (t == null) continue;
-      add(_CalEntry(t, r.reviewedAt, _Kind.reviewed));
+      final s = byId[r.subtopicId];
+      if (s == null) continue;
+      add(_CalEntry(s, r.reviewedAt, _Kind.reviewed));
     }
 
     final entries = (byDay[_key(_selected)] ?? const <_CalEntry>[]).toList()
@@ -239,18 +242,19 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                   const SizedBox(height: AppSpacing.sm),
               itemBuilder: (_, i) {
                 final e = entries[i];
-                final s = subjects
-                    .where((s) => s.id == e.topic.subjectId)
-                    .firstOrNull;
+                final subject = subjects[e.subtopic.subjectId];
+                final topic = topics[e.subtopic.topicId];
                 return FadeSlideIn(
                   index: i,
                   child: _EntryRow(
                     entry: e,
-                    subjectName: s?.name ?? 'No subject',
-                    accent: s?.color ?? cs.primary,
-                    onTap: () => context.push('/topic/${e.topic.id}'),
+                    topicName: topic?.title,
+                    subjectName: subject?.name ?? 'No subject',
+                    accent: subject?.color ?? cs.primary,
+                    onTap: () => context.push('/subtopic/${e.subtopic.id}'),
                     // Same pair of actions as Home, for anything due now.
-                    actionable: e.kind == _Kind.scheduled && e.topic.isDue,
+                    actionable:
+                        e.kind == _Kind.scheduled && e.subtopic.isDue,
                   ),
                 );
               },
@@ -266,6 +270,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 
 class _EntryRow extends ConsumerWidget {
   final _CalEntry entry;
+  final String? topicName;
   final String subjectName;
   final Color accent;
   final VoidCallback onTap;
@@ -273,6 +278,7 @@ class _EntryRow extends ConsumerWidget {
 
   const _EntryRow({
     required this.entry,
+    required this.topicName,
     required this.subjectName,
     required this.accent,
     required this.onTap,
@@ -310,7 +316,7 @@ class _EntryRow extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      entry.topic.title,
+                      entry.subtopic.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: tt.titleSmall?.copyWith(
@@ -318,8 +324,15 @@ class _EntryRow extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 3),
+                    // Same three-part identity as the Today card, flattened to
+                    // one line: a calendar row is read against a date, so the
+                    // time has to sit alongside the place it belongs to.
                     Text(
-                      '$subjectName · ${DateLabels.time(entry.when)}',
+                      [
+                        if (topicName != null) topicName!,
+                        subjectName,
+                        DateLabels.time(entry.when),
+                      ].join(' · '),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: tt.labelSmall,
@@ -343,17 +356,17 @@ class _EntryRow extends ConsumerWidget {
             Align(
               alignment: Alignment.centerRight,
               child: ReviseActions(
-                onDone: () => reviseTopic(
+                onDone: () => reviseSubtopic(
                   context,
                   ref,
-                  entry.topic.id,
-                  entry.topic.title,
+                  entry.subtopic.id,
+                  entry.subtopic.title,
                 ),
                 onMissed: () => markMissed(
                   context,
                   ref,
-                  entry.topic.id,
-                  entry.topic.title,
+                  entry.subtopic.id,
+                  entry.subtopic.title,
                 ),
               ),
             ),

@@ -3,41 +3,32 @@ import 'package:flutter/material.dart';
 import '../../core/constants/subject_palette.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
-import '../../domain/entities/topic.dart';
 import 'app_card.dart';
-import 'revise_action.dart';
 
-/// A topic row.
+/// A topic row — what a subject's page is a list of.
 ///
-/// The topic title is the primary line and the subject sits beneath it as
-/// context. (It was the other way round — subject first, title second — which
-/// buried the thing you're actually scanning for behind a label repeated on
-/// every row of a subject.)
-///
-/// Only the essentials are on the card; everything else lives in the detail
-/// sheet that opens on tap.
+/// A topic has no schedule of its own, so this row answers a different
+/// question from [SubtopicCard]: not "when do I revise this?" but "how much is
+/// in here, and is any of it waiting?". The counts are the whole content, and
+/// a topic with nothing due says so rather than showing an empty pill.
 class TopicCard extends StatelessWidget {
-  final Topic topic;
-  final String subjectName;
+  final String title;
   final Color accent;
-  final String relativeLabel;
+  final int subtopicCount;
+  final int dueCount;
+  final int masteredCount;
   final VoidCallback onTap;
-
-  /// Shown only for topics that are actually due. Both must be supplied
-  /// together — offering one without the other is what made the old single
-  /// button ambiguous.
-  final VoidCallback? onDone;
-  final VoidCallback? onMissed;
+  final VoidCallback? onLongPress;
 
   const TopicCard({
     super.key,
-    required this.topic,
-    required this.subjectName,
+    required this.title,
     required this.accent,
-    required this.relativeLabel,
+    required this.subtopicCount,
+    required this.dueCount,
+    required this.masteredCount,
     required this.onTap,
-    this.onDone,
-    this.onMissed,
+    this.onLongPress,
   });
 
   @override
@@ -45,122 +36,62 @@ class TopicCard extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final brightness = theme.brightness;
-
-    final overdue = topic.isOverdue;
-    final due = topic.isDue;
-    final subjectColor = SubjectPalette.readable(accent, brightness);
-    final paused = topic.status == TopicStatus.paused;
-    final mastered = topic.status == TopicStatus.completed;
+    final c = SubjectPalette.readable(accent, theme.brightness);
     final success = StatusColors.success(context);
 
-    final Color dueColor = overdue
-        ? cs.error
-        : due
-            ? (StatusColors.warning(context))
-            : cs.onSurfaceVariant;
-
-    final statusLabel = mastered
-        ? 'Mastered'
-        : paused
-            ? 'Paused'
-            : relativeLabel;
-    final statusColor = mastered
-        ? success
-        : paused
-            ? cs.onSurfaceVariant
-            : dueColor;
-
-    final actionable = onDone != null && onMissed != null;
+    final allMastered = subtopicCount > 0 && masteredCount == subtopicCount;
 
     return AppCard(
       onTap: onTap,
-      accent: mastered ? success : subjectColor,
-      muted: paused || mastered,
+      onLongPress: onLongPress,
+      accent: allMastered ? success : c,
+      muted: allMastered,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
         AppSpacing.md + 2,
         AppSpacing.md,
         AppSpacing.md + 2,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: Row(
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Primary: the topic itself.
                 Text(
-                  topic.title,
+                  title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: tt.titleSmall,
                 ),
-                const SizedBox(height: 4),
-                // Secondary: which subject it belongs to.
-                Row(
-                  children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        color: subjectColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        subjectName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: tt.labelSmall?.copyWith(color: subjectColor),
-                      ),
-                    ),
-                    Text('  ·  ', style: tt.labelSmall),
-                    Icon(
-                      mastered
-                          ? Icons.check_circle_outline_rounded
-                          : paused
-                              ? Icons.pause_circle_outline_rounded
-                              : Icons.schedule_rounded,
-                      size: 12.5,
-                      color: statusColor,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      statusLabel,
-                      style: tt.labelSmall?.copyWith(
-                        color: statusColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 3),
+                Text(
+                  subtopicCount == 0
+                      ? 'No subtopics yet'
+                      : '$subtopicCount subtopic'
+                          '${subtopicCount == 1 ? '' : 's'}'
+                          '${masteredCount > 0 ? ' · $masteredCount mastered' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.labelSmall,
                 ),
               ],
             ),
           ),
-              const SizedBox(width: AppSpacing.sm),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-              ),
-            ],
-          ),
-          // Full-width row beneath the title rather than squeezed alongside
-          // it: two labelled buttons need room to stay legible on a narrow
-          // phone, and a cramped pair invites the wrong tap.
-          if (actionable) ...[
-            const SizedBox(height: AppSpacing.md),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ReviseActions(onDone: onDone!, onMissed: onMissed!),
+          if (dueCount > 0) ...[
+            const SizedBox(width: AppSpacing.sm),
+            AppPill(
+              '$dueCount due',
+              color: StatusColors.warning(context),
+              tonal: true,
             ),
           ],
+          const SizedBox(width: AppSpacing.sm),
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
         ],
       ),
     );

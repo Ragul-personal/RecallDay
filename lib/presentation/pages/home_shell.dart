@@ -30,10 +30,13 @@ class HomeShell extends StatelessWidget {
     // Today and Subjects have a primary create action; Calendar and Progress
     // are read-only, so it's simply absent there.
     final fab = switch (shell.currentIndex) {
+      // Today's create action goes straight to a subtopic: that is the level
+      // that gets scheduled, and its form picks the subject and topic on the
+      // way through, so nothing is skipped by starting at the bottom.
       0 => _Fab(
-          key: const ValueKey('fab-topic'),
-          label: 'New topic',
-          onPressed: () => context.push('/create/topic'),
+          key: const ValueKey('fab-subtopic'),
+          label: 'New subtopic',
+          onPressed: () => context.push('/create/subtopic'),
         ),
       1 => _Fab(
           key: const ValueKey('fab-subject'),

@@ -2,10 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:workmanager/workmanager.dart';
 
-import '../data/models/topic_model.dart';
-import '../data/models/subject_model.dart';
 import '../data/models/review_model.dart';
-import '../domain/entities/topic.dart';
+import '../data/models/subject_model.dart';
+import '../data/models/subtopic_model.dart';
+import '../data/models/topic_model.dart';
+import '../domain/entities/subtopic.dart';
 import 'notification_service.dart';
 import 'storage_service.dart';
 
@@ -28,23 +29,29 @@ void schedulerCallbackDispatcher() {
       await Hive.initFlutter();
       _registerAdapters();
 
-      final box = await Hive.openBox<TopicModel>(StorageService.topicsBox);
-      // Subject names go into the notification body ("Algorithms · Dijkstra"),
-      // so the sweep needs this box open too.
+      final box =
+          await Hive.openBox<SubtopicModel>(StorageService.subtopicsBox);
+      // Subject and topic names go into the notification body ("Algorithms ·
+      // Graphs · Dijkstra"), so the sweep needs those boxes open too.
       final subjectBox =
           await Hive.openBox<SubjectModel>(StorageService.subjectsBox);
-      final names = {for (final s in subjectBox.values) s.id: s.name};
+      final topicBox = await Hive.openBox<TopicModel>(StorageService.topicsBox);
+      final subjectNames = {for (final s in subjectBox.values) s.id: s.name};
+      final topicNames = {for (final t in topicBox.values) t.id: t.title};
 
       await NotificationService.instance.init();
 
       final active = box.values
           .map((m) => m.toEntity())
-          .where((t) => t.status == TopicStatus.active)
+          .where((s) => s.status == SubtopicStatus.active)
           .toList();
-      await NotificationService.instance
-          .scheduleAllFrom(active, subjectNames: names);
+      await NotificationService.instance.scheduleAllFrom(
+        active,
+        subjectNames: subjectNames,
+        topicNames: topicNames,
+      );
 
-      debugPrint('[scheduler_worker] re-armed ${active.length} active topic alarms');
+      debugPrint('[scheduler_worker] re-armed ${active.length} alarms');
       return true;
     } catch (e, st) {
       debugPrint('[scheduler_worker] failed: $e\n$st');
@@ -55,8 +62,11 @@ void schedulerCallbackDispatcher() {
 
 void _registerAdapters() {
   if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(SubjectModelAdapter());
-  if (!Hive.isAdapterRegistered(2)) Hive.registerAdapter(TopicModelAdapter());
+  if (!Hive.isAdapterRegistered(2)) {
+    Hive.registerAdapter(SubtopicModelAdapter());
+  }
   if (!Hive.isAdapterRegistered(3)) Hive.registerAdapter(ReviewModelAdapter());
+  if (!Hive.isAdapterRegistered(4)) Hive.registerAdapter(TopicModelAdapter());
 }
 
 class SchedulerBootstrap {

@@ -52,7 +52,7 @@ class _SplashPageState extends ConsumerState<SplashPage> {
   }
 
   Future<void> _offerRestore() async {
-    // Offered only when a backup actually holds subjects or topics.
+    // Offered only when a backup actually holds something.
     //
     // This used to test whether the snapshot FILE existed, which is a
     // different question: after a reset the file is still there, holding empty
@@ -66,7 +66,7 @@ class _SplashPageState extends ConsumerState<SplashPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Restore your data?'),
         content: const Text(
-          'No topics found, but RecallDay has a saved backup. Would you like '
+          'Nothing found, but RecallDay has a saved backup. Would you like '
           'to restore it?',
         ),
         actions: [
@@ -91,7 +91,7 @@ class _SplashPageState extends ConsumerState<SplashPage> {
       return;
     }
 
-    // Restored topics need their alarms scheduled from scratch — a backup
+    // Restored subtopics need alarms scheduled from scratch — a backup
     // carries data, not OS-level alarms.
     await ref.read(topicCommandsProvider).reArmAllNotifications();
     if (mounted) setState(() => _status = 'Restored $summary');

@@ -14,8 +14,8 @@ import '../providers/providers.dart';
 ///   Done     -> the revision is recorded and the next one scheduled
 ///   Not done -> the revision is rolled to tomorrow, progress untouched
 ///
-/// Either way the topic leaves today's list, so it can't be actioned twice for
-/// the same date.
+/// Either way the subtopic leaves today's list, so it can't be actioned twice
+/// for the same date.
 Future<bool> confirmRevision(BuildContext context, String title) async {
   final ok = await showDialog<bool>(
     context: context,
@@ -65,18 +65,18 @@ Future<bool> confirmMissed(BuildContext context, String title) async {
   return ok ?? false;
 }
 
-/// Ask, then roll the topic to tomorrow without recording a review.
+/// Ask, then roll the subtopic to tomorrow without recording a review.
 Future<void> markMissed(
   BuildContext context,
   WidgetRef ref,
-  String topicId,
+  String subtopicId,
   String title,
 ) async {
   HapticFeedback.selectionClick();
   final ok = await confirmMissed(context, title);
   if (!ok || !context.mounted) return;
 
-  await ref.read(topicCommandsProvider).markNotRevised(topicId);
+  await ref.read(topicCommandsProvider).markNotRevised(subtopicId);
   if (!context.mounted) return;
 
   ScaffoldMessenger.of(context)
@@ -86,20 +86,21 @@ Future<void> markMissed(
     );
 }
 
-/// Ask, then record. Reports back when the topic returns.
-Future<void> reviseTopic(
+/// Ask, then record. Reports back when the subtopic returns.
+Future<void> reviseSubtopic(
   BuildContext context,
   WidgetRef ref,
-  String topicId,
+  String subtopicId,
   String title,
 ) async {
   HapticFeedback.selectionClick();
   final ok = await confirmRevision(context, title);
-  // "No" leaves the topic untouched and still due, exactly as it was.
+  // "No" leaves it untouched and still due, exactly as it was.
   if (!ok || !context.mounted) return;
 
   HapticFeedback.lightImpact();
-  final days = await ref.read(topicCommandsProvider).markRevisedToday(topicId);
+  final days =
+      await ref.read(topicCommandsProvider).markRevisedToday(subtopicId);
   if (!context.mounted) return;
 
   ScaffoldMessenger.of(context)
@@ -113,7 +114,7 @@ Future<void> reviseTopic(
     );
 }
 
-/// The pair of actions on a due topic's card.
+/// The pair of actions on a due subtopic's card.
 ///
 /// Both outcomes are visible and distinct: a green tick for done, a muted
 /// amber cross for not done. A single button couldn't say which of the two it

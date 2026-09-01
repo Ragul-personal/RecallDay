@@ -1,13 +1,18 @@
 import 'package:hive/hive.dart';
 import '../../domain/entities/review.dart';
-import '../../domain/entities/topic.dart';
+import '../../domain/entities/subtopic.dart';
 
 part 'review_model.g.dart';
 
+/// Hive-persisted view of [Review].
+///
+/// Field 1 and the JSON key are still `topicId`, and must stay that way: every
+/// review ever recorded is keyed by it, and the id it holds is the leaf's id,
+/// which the subtopic layer did not change. Only the Dart identifier moved.
 @HiveType(typeId: 3)
 class ReviewModel extends HiveObject {
   @HiveField(0) String id;
-  @HiveField(1) String topicId;
+  @HiveField(1) String subtopicId;
   @HiveField(2) DateTime reviewedAt;
   @HiveField(3) int ratingIndex;
   @HiveField(4) int intervalAppliedDays;
@@ -15,7 +20,7 @@ class ReviewModel extends HiveObject {
 
   ReviewModel({
     required this.id,
-    required this.topicId,
+    required this.subtopicId,
     required this.reviewedAt,
     required this.ratingIndex,
     required this.intervalAppliedDays,
@@ -24,7 +29,7 @@ class ReviewModel extends HiveObject {
 
   factory ReviewModel.fromEntity(Review r) => ReviewModel(
         id: r.id,
-        topicId: r.topicId,
+        subtopicId: r.subtopicId,
         reviewedAt: r.reviewedAt,
         ratingIndex: r.rating.index,
         intervalAppliedDays: r.intervalAppliedDays,
@@ -33,7 +38,7 @@ class ReviewModel extends HiveObject {
 
   Review toEntity() => Review(
         id: id,
-        topicId: topicId,
+        subtopicId: subtopicId,
         reviewedAt: reviewedAt,
         rating: ReviewRating.values[ratingIndex],
         intervalAppliedDays: intervalAppliedDays,
@@ -42,7 +47,7 @@ class ReviewModel extends HiveObject {
 
   Map<String, dynamic> toJson() => {
         'id': id,
-        'topicId': topicId,
+        'topicId': subtopicId,
         'reviewedAt': reviewedAt.toIso8601String(),
         'ratingIndex': ratingIndex,
         'intervalAppliedDays': intervalAppliedDays,
@@ -51,7 +56,7 @@ class ReviewModel extends HiveObject {
 
   factory ReviewModel.fromJson(Map<String, dynamic> j) => ReviewModel(
         id: j['id'] as String,
-        topicId: j['topicId'] as String,
+        subtopicId: (j['subtopicId'] as String?) ?? j['topicId'] as String,
         reviewedAt: DateTime.parse(j['reviewedAt'] as String),
         ratingIndex: (j['ratingIndex'] as int?) ?? ReviewRating.good.index,
         intervalAppliedDays: (j['intervalAppliedDays'] as int?) ?? 0,

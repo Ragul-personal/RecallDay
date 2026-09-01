@@ -1,16 +1,19 @@
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../data/migrations.dart';
 import '../data/models/review_model.dart';
 import '../data/models/subject_model.dart';
+import '../data/models/subtopic_model.dart';
 import '../data/models/topic_model.dart';
 
 /// Hive bootstrap + box accessors.
 ///
 /// Storage footprint notes:
 ///   • Each Subject record: ~120 bytes on disk.
-///   • Each Topic record: ~280 bytes (depends on notes length).
+///   • Each Topic record: ~90 bytes.
+///   • Each Subtopic record: ~280 bytes (depends on notes length).
 ///   • Each Review record: ~70 bytes.
-/// 1000 topics + 10000 reviews ≈ 1 MB on-disk. Fits comfortably on any phone.
+/// 1000 subtopics + 10000 reviews ≈ 1 MB on-disk. Fits comfortably on any phone.
 ///
 /// Hive uses an append-only log, so deleted records leave gaps in the file
 /// until it is rewritten. Hive does that automatically once enough entries
@@ -19,7 +22,19 @@ import '../data/models/topic_model.dart';
 /// database already does on its own.
 class StorageService {
   static const String subjectsBox = 'subjects';
-  static const String topicsBox = 'topics';
+
+  /// **The scheduled leaves live in a box literally named `topics`.**
+  ///
+  /// They have since 1.0.0, back when the leaf of the tree *was* a topic. A box
+  /// name is a filename on disk: renaming the constant is free, renaming the
+  /// box would leave every existing database behind. So the historical name
+  /// stays and the constant says what the records actually are.
+  static const String subtopicsBox = 'topics';
+
+  /// The grouping layer added with subtopics — a new box, so there is nothing
+  /// to migrate on the way in. (It cannot be called `topics`; see above.)
+  static const String topicsBox = 'topic_groups';
+
   static const String reviewsBox = 'reviews';
   static const String prefsBox = 'prefs';
 
@@ -32,22 +47,37 @@ class StorageService {
       Hive.registerAdapter(SubjectModelAdapter());
     }
     if (!Hive.isAdapterRegistered(2)) {
-      Hive.registerAdapter(TopicModelAdapter());
+      Hive.registerAdapter(SubtopicModelAdapter());
     }
     if (!Hive.isAdapterRegistered(3)) {
       Hive.registerAdapter(ReviewModelAdapter());
     }
+    if (!Hive.isAdapterRegistered(4)) {
+      Hive.registerAdapter(TopicModelAdapter());
+    }
 
     await Hive.openBox<SubjectModel>(subjectsBox);
     await Hive.openBox<TopicModel>(topicsBox);
+    await Hive.openBox<SubtopicModel>(subtopicsBox);
     await Hive.openBox<ReviewModel>(reviewsBox);
     await Hive.openBox(prefsBox);
+
+    // Subtopics saved by an earlier build have no parent. Building the missing
+    // layer here — before the first provider reads a box — means no screen
+    // ever has to cope with an unparented subtopic.
+    await migrateHierarchy();
   }
 
   Box<SubjectModel> get subjects => Hive.box<SubjectModel>(subjectsBox);
   Box<TopicModel> get topics => Hive.box<TopicModel>(topicsBox);
+  Box<SubtopicModel> get subtopics => Hive.box<SubtopicModel>(subtopicsBox);
   Box<ReviewModel> get reviews => Hive.box<ReviewModel>(reviewsBox);
   Box get prefs => Hive.box(prefsBox);
+
+  /// Re-run the hierarchy migration. Called at startup and after every restore,
+  /// since a backup can carry pre-subtopic records at any time.
+  Future<int> migrateHierarchy() =>
+      runHierarchyMigration(topics: topics, subtopics: subtopics);
 
   static const String _onboardedKey = 'onboarding_complete';
 
@@ -72,7 +102,7 @@ class StorageService {
 
   /// True when there is nothing to lose — used at startup to decide whether to
   /// pull a backup back in after a reinstall. Reviews are deliberately excluded:
-  /// orphan review rows without subjects or topics are not worth preserving.
-  bool get isEmpty => subjects.isEmpty && topics.isEmpty;
+  /// orphan review rows without subjects or subtopics are not worth preserving.
+  bool get isEmpty => subjects.isEmpty && topics.isEmpty && subtopics.isEmpty;
 
 }

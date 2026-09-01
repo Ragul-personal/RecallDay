@@ -15,6 +15,7 @@ import 'saf_service.dart';
 
 import '../data/models/review_model.dart';
 import '../data/models/subject_model.dart';
+import '../data/models/subtopic_model.dart';
 import '../data/models/topic_model.dart';
 import '../domain/entities/attachment.dart';
 import 'storage_service.dart';
@@ -92,7 +93,12 @@ class BackupService {
   static const String _archiveData = 'data.json';
   static const String _archiveAttachments = 'attachments';
 
-  static const int _schemaVersion = 2;
+  /// 3 added the topic layer. A version-2 snapshot carries the scheduled
+  /// leaves under `topics` — the key they had when a topic *was* the scheduled
+  /// thing — and has no `subtopics` at all; [restoreFromJson] reads both
+  /// shapes, so an old backup restores into the new tree without the user
+  /// doing anything.
+  static const int _schemaVersion = 3;
 
   // ---------------------------------------------------------------- snapshot
 
@@ -105,6 +111,7 @@ class BackupService {
       'exportedAt': DateTime.now().toIso8601String(),
       'subjects': store.subjects.values.map((m) => m.toJson()).toList(),
       'topics': store.topics.values.map((m) => m.toJson()).toList(),
+      'subtopics': store.subtopics.values.map((m) => m.toJson()).toList(),
       'reviews': store.reviews.values.map((m) => m.toJson()).toList(),
     };
   }
@@ -170,6 +177,7 @@ class BackupService {
         mirroredToFolder: mirrored,
         subjects: store.subjects.length,
         topics: store.topics.length,
+        subtopics: store.subtopics.length,
         reviews: store.reviews.length,
       );
     } catch (e, st) {
@@ -184,27 +192,30 @@ class BackupService {
   ///
   /// Called when an attachment is added. Constant memory regardless of size,
   /// and each file is written exactly once for its lifetime.
-  Future<bool> syncAttachment(String topicId, String localPath) async {
+  Future<bool> syncAttachment(String subtopicId, String localPath) async {
     if (!await SafService.instance.hasAccess()) return false;
     final name = localPath.split('/').last;
     return SafService.instance.copyIn(
-      '$_folderFiles/$topicId/$name',
+      '$_folderFiles/$subtopicId/$name',
       localPath,
       mime: _mimeFor(name),
     );
   }
 
-  Future<void> removeAttachmentFromFolder(String topicId, String localPath) async {
+  Future<void> removeAttachmentFromFolder(
+    String subtopicId,
+    String localPath,
+  ) async {
     if (!await SafService.instance.hasAccess()) return;
     final name = localPath.split('/').last;
-    await SafService.instance.deleteAt('$_folderFiles/$topicId/$name');
+    await SafService.instance.deleteAt('$_folderFiles/$subtopicId/$name');
   }
 
-  Future<void> removeTopicFilesFromFolder(String topicId) async {
+  Future<void> removeSubtopicFilesFromFolder(String subtopicId) async {
     if (!await SafService.instance.hasAccess()) return;
-    // The whole directory, not its files one by one — otherwise the topic's
+    // The whole directory, not its files one by one — otherwise the record's
     // folder survives as an empty shell.
-    await SafService.instance.deleteDirAt('$_folderFiles/$topicId');
+    await SafService.instance.deleteDirAt('$_folderFiles/$subtopicId');
   }
 
   /// Push across any attachment the folder doesn't have yet.
@@ -402,13 +413,13 @@ class BackupService {
     return copied;
   }
 
-  /// Point every topic's file attachments at this install's paths.
+  /// Point every subtopic's file attachments at this install's paths.
   ///
   /// Absolute paths inside a backup belong to the install that wrote them, so
   /// after pulling files across they have to be rewritten or nothing opens.
   Future<void> _rehomeAllAttachments() async {
     final docs = await getApplicationDocumentsDirectory();
-    final box = StorageService.instance.topics;
+    final box = StorageService.instance.subtopics;
 
     for (final key in box.keys.toList()) {
       final m = box.get(key);
@@ -461,7 +472,8 @@ class BackupService {
       final m = jsonDecode(json) as Map<String, dynamic>;
       final subjects = (m['subjects'] as List?)?.length ?? 0;
       final topics = (m['topics'] as List?)?.length ?? 0;
-      return subjects > 0 || topics > 0;
+      final subtopics = (m['subtopics'] as List?)?.length ?? 0;
+      return subjects > 0 || topics > 0 || subtopics > 0;
     } catch (_) {
       return false;
     }
@@ -743,20 +755,33 @@ class BackupService {
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('That file is not a RecallDay backup.');
     }
-    if (decoded['subjects'] == null && decoded['topics'] == null) {
+    if (decoded['subjects'] == null &&
+        decoded['topics'] == null &&
+        decoded['subtopics'] == null) {
       throw const FormatException(
         'That backup has no subjects or topics in it.',
       );
     }
 
+    // Which shape is this? A version-3 snapshot separates the two layers;
+    // anything older has only `topics`, and those entries ARE the scheduled
+    // leaves. Testing for the key rather than the version number means a
+    // hand-edited or truncated file is read by what it actually contains.
+    final hasTopicLayer = decoded['subtopics'] != null;
+    final rawTopics = (decoded['topics'] as List? ?? const []);
+    final rawSubtopics = hasTopicLayer
+        ? (decoded['subtopics'] as List? ?? const [])
+        : rawTopics;
+
     final store = StorageService.instance;
     if (!merge) {
       await store.subjects.clear();
       await store.topics.clear();
+      await store.subtopics.clear();
       await store.reviews.clear();
     }
 
-    var subjects = 0, topics = 0, reviews = 0, skipped = 0;
+    var subjects = 0, topics = 0, subtopics = 0, reviews = 0, skipped = 0;
 
     for (final raw in (decoded['subjects'] as List? ?? const [])) {
       try {
@@ -769,13 +794,26 @@ class BackupService {
       }
     }
 
-    for (final raw in (decoded['topics'] as List? ?? const [])) {
+    if (hasTopicLayer) {
+      for (final raw in rawTopics) {
+        try {
+          final m = TopicModel.fromJson(raw as Map<String, dynamic>);
+          await store.topics.put(m.id, m);
+          topics++;
+        } catch (e) {
+          debugPrint('[backup] skipped topic: $e');
+          skipped++;
+        }
+      }
+    }
+
+    for (final raw in rawSubtopics) {
       try {
-        final m = TopicModel.fromJson(raw as Map<String, dynamic>);
-        await store.topics.put(m.id, m);
-        topics++;
+        final m = SubtopicModel.fromJson(raw as Map<String, dynamic>);
+        await store.subtopics.put(m.id, m);
+        subtopics++;
       } catch (e) {
-        debugPrint('[backup] skipped topic: $e');
+        debugPrint('[backup] skipped subtopic: $e');
         skipped++;
       }
     }
@@ -791,9 +829,15 @@ class BackupService {
       }
     }
 
+    // An older backup carries no topics, and even a current one can arrive
+    // with a subtopic whose parent failed to parse. Either way the tree has to
+    // be whole before a screen reads it.
+    topics += await store.migrateHierarchy();
+
     return RestoreSummary(
       subjects: subjects,
       topics: topics,
+      subtopics: subtopics,
       reviews: reviews,
       skipped: skipped,
     );
@@ -835,12 +879,13 @@ class BackupResult {
   /// that outlives an uninstall.
   final bool mirroredToFolder;
 
-  final int subjects, topics, reviews;
+  final int subjects, topics, subtopics, reviews;
 
   const BackupResult.success({
     required this.path,
     required this.subjects,
     required this.topics,
+    required this.subtopics,
     required this.reviews,
     this.mirroredToFolder = false,
   })  : ok = true,
@@ -852,15 +897,17 @@ class BackupResult {
         mirroredToFolder = false,
         subjects = 0,
         topics = 0,
+        subtopics = 0,
         reviews = 0;
 }
 
 class RestoreSummary {
-  final int subjects, topics, reviews, skipped, files;
+  final int subjects, topics, subtopics, reviews, skipped, files;
 
   const RestoreSummary({
     required this.subjects,
     required this.topics,
+    required this.subtopics,
     required this.reviews,
     required this.skipped,
     this.files = 0,
@@ -869,15 +916,18 @@ class RestoreSummary {
   RestoreSummary withFiles(int n) => RestoreSummary(
         subjects: subjects,
         topics: topics,
+        subtopics: subtopics,
         reviews: reviews,
         skipped: skipped,
         files: n,
       );
 
-  bool get isEmpty => subjects == 0 && topics == 0 && reviews == 0;
+  bool get isEmpty =>
+      subjects == 0 && topics == 0 && subtopics == 0 && reviews == 0;
 
   @override
-  String toString() => '$subjects subjects, $topics topics, $reviews reviews'
+  String toString() => '$subjects subjects, $topics topics, '
+      '$subtopics subtopics, $reviews reviews'
       '${files > 0 ? ', $files files' : ''}'
       '${skipped > 0 ? ' ($skipped skipped)' : ''}';
 }

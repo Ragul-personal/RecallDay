@@ -1,23 +1,27 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:recallday/domain/entities/topic.dart';
+import 'package:recallday/domain/entities/subtopic.dart';
 import 'package:recallday/domain/usecases/spaced_repetition_engine.dart';
 
-Topic _seed({
+Subtopic _seed({
   int reps = 0,
   double ease = 2.5,
   int currentInterval = 0,
   int ladderIdx = 0,
+  DateTime? nextDueAt,
+  SubtopicStatus status = SubtopicStatus.active,
 }) {
-  return Topic(
+  return Subtopic(
     id: 't',
     subjectId: 's',
+    topicId: 'tp',
     title: 'x',
     createdAt: DateTime(2024, 1, 1),
-    nextDueAt: DateTime(2024, 1, 1, 19),
+    nextDueAt: nextDueAt ?? DateTime(2024, 1, 1, 19),
     repetitions: reps,
     ease: ease,
     currentIntervalDays: currentInterval,
     ladderIndex: ladderIdx,
+    status: status,
   );
 }
 
@@ -49,7 +53,7 @@ void main() {
       expect(r.nextRepetitions, 0);
     });
 
-    test('next due time is anchored to topic reminder hour/minute', () {
+    test('next due time is anchored to the reminder hour/minute', () {
       final t = _seed(ladderIdx: 0).copyWith(
         reminderHour: 9, reminderMinute: 30,
       );
@@ -111,7 +115,7 @@ void main() {
       expect(r.nextRepetitions, 0);
     });
 
-    // Topics saved by the old [1,3,7,15,30,60,90] ladder carry an index that is
+    // Records saved by the old [1,3,7,15,30,60,90] ladder carry an index that is
     // out of range for the current one. The clamp must absorb it rather than
     // throwing, and land the topic on the monthly step.
     test('a stale ladder index from the old ladder lands on the month', () {
@@ -119,6 +123,67 @@ void main() {
       final r = engine.schedule(t, ReviewRating.good, now: ref);
       expect(r.nextLadderIndex, topRung);
       expect(r.nextIntervalDays, month);
+    });
+  });
+
+  // The day, not the hour, is the unit the app schedules in. These pin that
+  // down because the alternative — testing `nextDueAt <= now` — is the exact
+  // bug the rule replaced: with the default reminder at 6am, a subtopic due
+  // today was listed from midnight but could not be actioned until 6.
+  group('Subtopic — the day is the unit', () {
+    // Calendar arithmetic, not `add(Duration(days:))`: a 24-hour shift across
+    // a DST boundary lands on the wrong hour, and these assertions are about
+    // which *day* something falls on.
+    DateTime at(int addDays, int hour) {
+      final n = DateTime.now();
+      return DateTime(n.year, n.month, n.day + addDays, hour);
+    }
+
+    test('due later today counts as due, however early it still is', () {
+      expect(_seed(nextDueAt: at(0, 23)).isDue, isTrue);
+      expect(_seed(nextDueAt: at(0, 0)).isDue, isTrue);
+    });
+
+    test('due tomorrow is not due yet', () {
+      expect(_seed(nextDueAt: at(1, 0)).isDue, isFalse);
+      expect(_seed(nextDueAt: at(1, 0)).isOverdue, isFalse);
+    });
+
+    test('an earlier day is overdue, not merely due', () {
+      final missed = _seed(nextDueAt: at(-1, 23));
+      expect(missed.isOverdue, isTrue);
+      // isDue stays true as well — Today's two lists partition on isOverdue,
+      // so overlapping here is what keeps the detail page's Revise button
+      // available for something that was missed.
+      expect(missed.isDue, isTrue);
+    });
+
+    test('today is not overdue at any hour', () {
+      expect(_seed(nextDueAt: at(0, 0)).isOverdue, isFalse);
+      expect(_seed(nextDueAt: at(0, 23)).isOverdue, isFalse);
+    });
+
+    test('a paused or mastered subtopic is never due', () {
+      for (final st in [SubtopicStatus.paused, SubtopicStatus.completed]) {
+        final s = _seed(nextDueAt: at(-3, 6), status: st);
+        expect(s.isDue, isFalse, reason: '$st');
+        expect(s.isOverdue, isFalse, reason: '$st');
+      }
+    });
+
+    test('new subtopics default to a 6am reminder', () {
+      expect(Subtopic.defaultReminderHour, 6);
+      expect(
+        Subtopic(
+          id: 'a',
+          subjectId: 's',
+          topicId: 't',
+          title: 'x',
+          createdAt: DateTime(2024, 1, 1),
+          nextDueAt: DateTime(2024, 1, 2),
+        ).reminderHour,
+        6,
+      );
     });
   });
 
@@ -192,7 +257,7 @@ void main() {
       expect(r.nextIntervalDays, SpacedRepetitionEngine.defaultLadder.first);
     });
 
-    test('time of day the topic was created makes no difference', () {
+    test('time of day it was created makes no difference', () {
       final t = _seed().copyWith(reminderHour: 19, reminderMinute: 0);
       final early = engine.initialSchedule(t, now: DateTime(2024, 6, 1, 9, 0));
       final late = engine.initialSchedule(t, now: DateTime(2024, 6, 1, 21, 0));

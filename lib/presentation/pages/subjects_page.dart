@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants/subject_palette.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_tokens.dart';
+import '../../domain/entities/subtopic.dart';
 import '../providers/providers.dart';
 import '../widgets/app_card.dart';
 import '../widgets/delete_confirm.dart';
@@ -24,6 +26,8 @@ class SubjectsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final subjects = ref.watch(subjectsStreamProvider).valueOrNull ?? const [];
     final topics = ref.watch(topicsStreamProvider).valueOrNull ?? const [];
+    final subtopics =
+        ref.watch(subtopicsStreamProvider).valueOrNull ?? const <Subtopic>[];
 
     return CustomScrollView(
       slivers: [
@@ -33,7 +37,9 @@ class SubjectsPage extends ConsumerWidget {
                   ? null
                   : '${subjects.length} subject'
                       '${subjects.length == 1 ? '' : 's'} · '
-                      '${topics.length} topic${topics.length == 1 ? '' : 's'}',
+                      '${topics.length} topic${topics.length == 1 ? '' : 's'} · '
+                      '${subtopics.length} subtopic'
+                      '${subtopics.length == 1 ? '' : 's'}',
             ),
             if (subjects.isEmpty)
               SliverFillRemaining(
@@ -65,24 +71,26 @@ class SubjectsPage extends ConsumerWidget {
                       const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (_, i) {
                     final s = subjects[i];
-                    final mine =
-                        topics.where((t) => t.subjectId == s.id).toList();
-                    final due = mine.where((t) => t.isDue).length;
+                    final myTopics =
+                        topics.where((t) => t.subjectId == s.id).length;
+                    final mySubtopics =
+                        subtopics.where((x) => x.subjectId == s.id).toList();
                     return FadeSlideIn(
                       index: i,
                       child: _SubjectRow(
                         name: s.name,
                         color: s.color,
                         iconKey: s.iconKey,
-                        total: mine.length,
-                        due: due,
+                        topics: myTopics,
+                        subtopics: mySubtopics.length,
+                        due: mySubtopics.where((x) => x.isDue).length,
                         onTap: () => context.push('/subject/${s.id}'),
                         onLongPress: () => _showActions(
                           context,
                           ref,
                           s.id,
                           s.name,
-                          mine.length,
+                          myTopics,
                         ),
                       ),
                     );
@@ -100,6 +108,8 @@ class SubjectsPage extends ConsumerWidget {
     String name,
     int topicCount,
   ) async {
+    // Long-press shortcut for the two actions that otherwise need a trip into
+    // the subject and back out again.
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) {
@@ -167,8 +177,9 @@ class SubjectsPage extends ConsumerWidget {
       title: 'Delete subject?',
       message: topicCount == 0
           ? 'This permanently removes “$name”.'
-          : 'This permanently removes “$name” and its $topicCount '
-              'topic${topicCount == 1 ? '' : 's'}, including all review history.',
+          : 'This permanently removes “$name”, its $topicCount '
+              'topic${topicCount == 1 ? '' : 's'} and every subtopic inside '
+              'them, including all review history.',
     );
     if (!ok) return;
     await ref.read(topicCommandsProvider).deleteSubjectCascading(subjectId);
@@ -179,7 +190,8 @@ class _SubjectRow extends StatelessWidget {
   final String name;
   final Color color;
   final String iconKey;
-  final int total;
+  final int topics;
+  final int subtopics;
   final int due;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -188,7 +200,8 @@ class _SubjectRow extends StatelessWidget {
     required this.name,
     required this.color,
     required this.iconKey,
-    required this.total,
+    required this.topics,
+    required this.subtopics,
     required this.due,
     required this.onTap,
     required this.onLongPress,
@@ -229,16 +242,23 @@ class _SubjectRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  total == 0
+                  topics == 0
                       ? 'No topics yet'
-                      : '$total topic${total == 1 ? '' : 's'}',
+                      : '$topics topic${topics == 1 ? '' : 's'} · '
+                          '$subtopics subtopic${subtopics == 1 ? '' : 's'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: tt.labelSmall,
                 ),
               ],
             ),
           ),
           if (due > 0) ...[
-            AppPill('$due due', color: c, tonal: true),
+            AppPill(
+              '$due due',
+              color: StatusColors.warning(context),
+              tonal: true,
+            ),
             const SizedBox(width: AppSpacing.sm),
           ],
           Icon(

@@ -316,8 +316,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           leading: const Icon(Icons.ios_share_rounded),
           title: const Text('Export a copy'),
           subtitle: const Text(
-            'One backup file holding everything — subjects, topics, review '
-            'history and every attachment',
+            'One backup file holding everything — subjects, topics, '
+            'subtopics, review history and every attachment',
           ),
           onTap: _busy
               ? null
@@ -383,7 +383,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       if (summary.isEmpty) {
         await _details(
           'Nothing restored',
-          'That file was read but contained no subjects or topics.',
+          'That file was read but contained nothing to restore.',
         );
       } else if (summary.files == 0 && source == ImportSource.file) {
         // A loose data file carries records but no attachments, and the picker
@@ -417,7 +417,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             final ok = await confirmDelete(
               context,
               title: 'Reset all data?',
-              message: 'This deletes every subject, topic, review and '
+              message: 'This deletes every subject, topic, subtopic, review and '
                   'attachment — both on this device and in your folder. '
                   'Export a backup first if you want to keep any of it; an '
                   'exported file is not affected.',

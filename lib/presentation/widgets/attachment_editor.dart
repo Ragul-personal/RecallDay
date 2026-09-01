@@ -8,19 +8,19 @@ import '../../services/attachment_service.dart';
 import '../pages/media_viewer_page.dart';
 import 'app_card.dart';
 
-/// Add / view / remove attachments on a topic.
+/// Add / view / remove attachments on a subtopic.
 ///
-/// Used unchanged in two places — the create-topic form and the topic detail
-/// page — so files can be attached while composing a topic *and* at any point
+/// Used unchanged in two places — the create form and the subtopic detail
+/// page — so files can be attached while composing one *and* at any point
 /// afterwards. It owns no state: the caller holds the list and persists it.
 class AttachmentEditor extends StatefulWidget {
-  final String topicId;
+  final String subtopicId;
   final List<Attachment> attachments;
   final ValueChanged<List<Attachment>> onChanged;
 
   const AttachmentEditor({
     super.key,
-    required this.topicId,
+    required this.subtopicId,
     required this.attachments,
     required this.onChanged,
   });
@@ -42,7 +42,7 @@ class _AttachmentEditorState extends State<AttachmentEditor> {
   Future<void> _pick(FileType type) async {
     setState(() => _busy = true);
     final added = await AttachmentService.instance.pickAndImport(
-      topicId: widget.topicId,
+      subtopicId: widget.subtopicId,
       type: type,
     );
     if (!mounted) return;
@@ -74,8 +74,8 @@ class _AttachmentEditorState extends State<AttachmentEditor> {
         title: const Text('Remove attachment?'),
         content: Text(
           a.isLocalFile
-              ? '“${a.name}” will be deleted from this topic.'
-              : '“${a.name}” will be removed from this topic.',
+              ? '“${a.name}” will be deleted from this subtopic.'
+              : '“${a.name}” will be removed from this subtopic.',
         ),
         actions: [
           TextButton(

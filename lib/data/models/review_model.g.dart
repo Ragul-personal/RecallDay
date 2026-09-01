@@ -15,7 +15,7 @@ class ReviewModelAdapter extends TypeAdapter<ReviewModel> {
     };
     return ReviewModel(
       id: fields[0] as String,
-      topicId: fields[1] as String,
+      subtopicId: fields[1] as String,
       reviewedAt: fields[2] as DateTime,
       ratingIndex: fields[3] as int,
       intervalAppliedDays: fields[4] as int,
@@ -28,7 +28,7 @@ class ReviewModelAdapter extends TypeAdapter<ReviewModel> {
     writer
       ..writeByte(6)
       ..writeByte(0)..write(obj.id)
-      ..writeByte(1)..write(obj.topicId)
+      ..writeByte(1)..write(obj.subtopicId)
       ..writeByte(2)..write(obj.reviewedAt)
       ..writeByte(3)..write(obj.ratingIndex)
       ..writeByte(4)..write(obj.intervalAppliedDays)

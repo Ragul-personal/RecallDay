@@ -28,7 +28,8 @@ Future<void> main() async {
   // to tell what went wrong. A broken subsystem should cost you that feature,
   // not the whole app.
 
-  // 1) Local storage (Hive boxes for subjects, topics, reviews, prefs).
+  // 1) Local storage (Hive boxes for subjects, topics, subtopics, reviews
+  //    and prefs; opening them also runs the hierarchy migration).
   //    The one genuinely fatal dependency: with no database there is no app.
   String? fatal;
   try {
@@ -128,6 +129,16 @@ class _AppRootState extends ConsumerState<_AppRoot>
       // snapshot, so it's mirrored on the way out rather than after every edit.
       unawaited(BackupService.instance.mirrorArchiveToFolder());
     }
+
+    // Coming back is the one moment the date is most likely to have moved
+    // without the in-app poll noticing: a frozen process runs no timers, so a
+    // phone left in a pocket overnight would otherwise reopen on yesterday's
+    // list. Invalidating is free when the day hasn't actually changed —
+    // currentDayProvider recomputes to the same value and nothing downstream
+    // sees a new one.
+    if (state == AppLifecycleState.resumed) {
+      ref.invalidate(currentDayProvider);
+    }
   }
 
   @override
@@ -140,15 +151,15 @@ class _AppRootState extends ConsumerState<_AppRoot>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    NotificationService.onAction = (topicId, action) {
+    NotificationService.onAction = (subtopicId, action) {
       final router = ref.read(routerProvider);
-      router.go('/topic/$topicId?action=${action ?? ''}');
+      router.go('/subtopic/$subtopicId?action=${action ?? ''}');
     };
 
-    // Re-arm every active topic's alarms on each cold start. Android drops
+    // Re-arm every active subtopic's alarms on each cold start. Android drops
     // scheduled alarms on reboot, app update and OEM battery sweeps; without
     // this, a dropped alarm was never rescheduled until the user happened to
-    // edit or review that topic.
+    // edit or review that record.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(topicCommandsProvider).reArmAllNotifications();
     });

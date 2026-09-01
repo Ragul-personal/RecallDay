@@ -20,16 +20,24 @@ for how that pipeline works and how to build locally.
 
 ## What it does
 
-You add a Subject, then Topics inside it. RecallDay schedules each topic's
-revisions and reminds you when they're due.
+Three levels: **Subject → Topic → Subtopic**. A subject is a course, a topic is
+a chapter inside it, and a subtopic is the thing you actually sit down and
+revise. Only subtopics carry a schedule — subjects and topics are grouping, so
+"when is this due?" always has exactly one answer.
 
-- **Today** shows only what is due now — mark each **Done** or **Not done**
-- **Reminders** name the subject and topic, and re-fire daily until actioned
+- **Today** lists the day's subtopics from midnight, each labelled with its
+  topic and subject — mark them **Done** or **Not done**
+- **Reminders** at 6am by default, naming subject, topic and subtopic, re-fired
+  daily until actioned
 - **Two daily summaries** at 6am and 8pm, sent only when something is pending
-- **Attachments** per topic: images, video, documents, web and YouTube links
+- **Attachments** per subtopic: images, video, documents, web and YouTube links
 - **Calendar** plots completed revisions backwards and scheduled ones forwards
 - **Progress** tracks streaks, activity and per-subject mastery
 - **Light and dark themes**, switchable
+
+The day, not the hour, is the unit: a subtopic due today appears — and can be
+ticked off — from 00:00, whatever time its reminder is set to. The reminder
+hour only decides when the phone buzzes.
 
 ## Architecture
 
@@ -48,12 +56,13 @@ lib/
 │   │   └── app_tokens.dart      — spacing, radii, motion — the 4pt grid
 │   └── utils/date_utils.dart    — relative date labels
 ├── domain/                      — pure Dart, no Flutter, no I/O
-│   ├── entities/                — Subject, Topic, Review, Attachment
+│   ├── entities/                — Subject, Topic, Subtopic, Review, …
 │   ├── repositories/            — abstract interfaces
 │   └── usecases/
 │       └── spaced_repetition_engine.dart   ← the scheduling brain
 ├── data/
-│   ├── models/                  — Hive @HiveType adapters (typeIds 1, 2, 3)
+│   ├── migrations.dart          — builds the topic layer for old records
+│   ├── models/                  — Hive adapters (typeIds 1, 2, 3, 4)
 │   └── repositories/            — Hive-backed implementations
 ├── services/                    — the platform edge
 │   ├── storage_service.dart     — Hive bootstrap + box accessors
@@ -68,10 +77,10 @@ lib/
     │   ├── topic_commands.dart  — WRITE side: every mutation
     │   └── theme_provider.dart  — light/dark/system, persisted
     ├── pages/                   — one file per screen
-    └── widgets/                 — AppCard, TopicCard, EmptyState, …
+    └── widgets/                 — AppCard, SubtopicCard, EmptyState, …
 ```
 
-Two boundaries worth knowing:
+Three boundaries worth knowing:
 
 - **Reads and writes are separate.** `providers.dart` holds derived state only;
   anything that changes data lives in `topic_commands.dart`. It re-exports the
@@ -79,6 +88,12 @@ Two boundaries worth knowing:
 - **Hive is app-private; the user's folder is the durable copy.** Hive needs a
   real filesystem path and cannot live on a SAF tree, so the database is
   internal and mirrored to the chosen folder after every change.
+- **The scheduled leaf never moved.** A *topic* used to be the thing being
+  revised. Adding the subtopic layer left those records exactly where they
+  were — same typeId 2, same box (still literally named `topics`), same ids —
+  and built the new grouping layer above them in a new box. That is why
+  reviews, attachment folders and notification ids all survived the change
+  untouched; `data/migrations.dart` only fills in each record's new parent.
 
 ## Spaced repetition
 
@@ -90,12 +105,12 @@ holds:
 tomorrow → 3d → 7d → 14d → 30d → 30d → 30d → …
 ```
 
-The top rung is a **plateau**, not a stop: once a topic reaches it, every later
-revision falls one more month out. That behaviour is not a special case in the
-code — the same `math.min(index + advance, ladder.length - 1)` clamp that stops
-the walk overrunning the ladder is what parks it on the last rung.
+The top rung is a **plateau**, not a stop: once a subtopic reaches it, every
+later revision falls one more month out. That behaviour is not a special case in
+the code — the same `math.min(index + advance, ladder.length - 1)` clamp that
+stops the walk overrunning the ladder is what parks it on the last rung.
 
-The day a topic is created is its first exposure, not a revision — the first
+The day a subtopic is created is its first exposure, not a revision — the first
 revision lands one ladder step later.
 
 > **Note on ease.** The engine models four ratings with per-rating ease deltas,
@@ -107,7 +122,7 @@ revision lands one ladder step later.
 > **Why the plateau.** This replaced an SM-2 steady state
 > (`interval × ease × ratingMultiplier`, capped at 730 days). With ease pinned
 > at its 2.5 default it produced 7 → 18 → 45 → 113 → 282 days, drifting
-> revisions years apart. Topics carrying a `ladderIndex` from the older
+> revisions years apart. Records carrying a `ladderIndex` from the older
 > `[1, 3, 7, 15, 30, 60, 90]` ladder need no migration: the clamp absorbs the
 > stale index and lands them on the monthly step at their next review.
 
@@ -125,11 +140,11 @@ Framework, and RecallDay keeps it current:
 <chosen folder>/
 ├── recallday-backup.json     — the database; rewritten on every change
 └── RecallDay-files/
-    └── <topicId>/<file>      — one copy per attachment, written once
+    └── <subtopicId>/<file>   — one copy per attachment, written once
 ```
 
 Attachments are **not** bundled into an archive for the automatic backup.
-Re-zipping every file on each edit meant a topic rename rebuilt tens of
+Re-zipping every file on each edit meant a rename rebuilt tens of
 megabytes in memory and pushed it through a method channel — enough to exhaust
 the heap and get the process killed. They are immutable once added, so each is
 streamed across exactly once.
